@@ -1,0 +1,84 @@
+branch_code,region,branch_name
+1,MIỀN TRUNG,Chi nhánh Đà Nẵng UN
+2,ĐÔNG NAM BỘ,Chi nhánh Bình Dương UN
+8,HỒ CHÍ MINH,Chi nhánh Bình Chánh UN
+10,ĐÔNG NAM BỘ,Chi nhánh Đồng Nai UN
+11,TÂY NAM BỘ,Chi nhánh Tiền Giang UN
+12,ĐÔNG NAM BỘ,Chi nhánh Bình Thuận UN
+13,ĐÔNG NAM BỘ,Chi nhánh Bình Phước UN
+14,MIỀN TRUNG,Chi nhánh Quảng Ngãi UN
+15,TÂY NAM BỘ,Chi nhánh Vĩnh Long UN
+16,TÂY NAM BỘ,Chi nhánh Cần Thơ UN
+17,TÂY NAM BỘ,Chi nhánh Cà Mau UN
+18,TÂY NAM BỘ,Chi nhánh An Giang UN
+19,ĐÔNG NAM BỘ,Chi nhánh Vũng Tàu UN
+20,ĐÔNG NAM BỘ,Chi nhánh Xuân Lộc UN
+22,ĐÔNG NAM BỘ,Chi nhánh Tây Ninh UN
+23,TÂY NGUYÊN,Chi nhánh Lâm Đồng UN
+24,TÂY NAM BỘ,Chi nhánh Kiên Giang UN
+49,MIỀN TRUNG,Chi nhánh Khánh Hòa UN
+50,TÂY NAM BỘ,Chi nhánh An Giang UM
+52,TÂY NAM BỘ,Chi nhánh An Giang UL ©
+53,TÂY NAM BỘ,Chi nhánh Cà Mau UL ©
+55,TÂY NAM BỘ,Chi nhánh Tiền Giang UL ©
+56,TÂY NAM BỘ,Chi nhánh Vĩnh Long UL ©
+57,ĐÔNG NAM BỘ,Chi nhánh Bình Thuận UL ©
+58,TÂY NAM BỘ,Chi nhánh Cần Thơ UL ©
+59,MIỀN TRUNG,Chi nhánh Bình Định UM
+60,ĐÔNG NAM BỘ,Chi nhánh Bình Dương UM
+61,ĐÔNG NAM BỘ,Chi nhánh Bình Phước UM
+63,TÂY NAM BỘ,Chi nhánh Cà Mau UM
+65,TÂY NAM BỘ,Chi nhánh Cần Thơ UM
+67,TÂY NGUYÊN,Chi nhánh Đắk Lắk UM
+69,TÂY NAM BỘ,Chi nhánh Vĩnh Long UM
+70,TÂY NGUYÊN,Chi nhánh Gia Lai UM
+71,MIỀN TRUNG,Chi nhánh Khánh Hòa UM
+72,MIỀN TRUNG,Chi nhánh Quảng Ngãi UM
+73,TÂY NAM BỘ,Chi nhánh Tiền Giang UM
+75,ĐÔNG NAM BỘ,Chi nhánh Xuân Lộc UM
+76,HỒ CHÍ MINH,Chi nhánh Bình Tân UL
+78,TÂY NGUYÊN,Chi nhánh Gia Lai UL ©
+79,TÂY NGUYÊN,Chi nhánh Lâm Đồng UM ©
+81,ĐÔNG NAM BỘ,Chi nhánh Đồng Nai UM ©
+94,ĐÔNG NAM BỘ,Chi nhánh Tây Ninh UM
+95,TÂY NGUYÊN,Chi nhánh Đắk Lắk UN ©
+97,ĐÔNG NAM BỘ,Chi Nhánh Bình Phước UL ©
+96,ĐÔNG NAM BỘ,Chi Nhánh Bình Dương UL ©
+64,ĐÔNG NAM BỘ,Chi nhánh Bình Thuận UM
+0,ĐÔNG NAM BỘ,Công Ty Cổ Phần Tập Đoàn UNIS
+74,ĐÔNG NAM BỘ,Chi nhánh Vũng Tàu UM
+98,TÂY NAM BỘ,Chi nhánh Kiên Giang UM
+99,MIỀN TRUNG,Chi nhánh Bình Định UN
+105,TÂY NAM BỘ,Chi nhánh An Giang UC
+108,HỒ CHÍ MINH,Chi nhánh Hồ Chí Minh UC
+112,MIỀN TRUNG,Chi nhánh Quảng Ngãi UC
+100,TÂY NGUYÊN,Chi nhánh Lâm Đồng UC
+101,ĐÔNG NAM BỘ,Chi nhánh Đồng Nai UC
+102,MIỀN TRUNG,Chi nhánh Khánh Hòa UC
+103,TÂY NAM BỘ,Chi nhánh Tiền Giang UC
+104,TÂY NAM BỘ,Chi nhánh Vĩnh Long UC
+110,MIỀN TRUNG,Chi nhánh Bình Định UC
+107,TÂY NAM BỘ,Chi nhánh Cà Mau UC
+93,ĐÔNG NAM BỘ,Chi Nhánh Lotina
+106,TÂY NAM BỘ,Chi nhánh Cần Thơ UC
+66,MIỀN TRUNG,Chi nhánh Đà Nẵng UM
+113,ĐÔNG NAM BỘ,Chi nhánh Bình Thuận UC
+114,ĐÔNG NAM BỘ,Chi nhánh Vũng Tàu UC
+115,MIỀN TRUNG,Chi nhánh Đà Nẵng UC
+85,ĐÔNG NAM BỘ,Chi Nhánh Kaizen
+109,ĐÔNG NAM BỘ,Chi nhánh Bình Dương UC
+39,TÂY NAM BỘ,Chi nhánh Vĩnh Long UL
+40,TÂY NAM BỘ,Chi nhánh An Giang UL
+41,TÂY NAM BỘ,Chi nhánh Cà Mau UL
+42,TÂY NAM BỘ,Chi nhánh Cần Thơ UL
+43,MIỀN TRUNG,Chi nhánh Quảng Ngãi UL
+68,ĐÔNG NAM BỘ,Chi nhánh Đồng Nai UM 
+116,TÂY NAM BỘ,Chi nhánh Tiền Giang UL
+117,ĐÔNG NAM BỘ,Chi nhánh Bình Dương UL
+118,ĐÔNG NAM BỘ,Chi nhánh Đồng Nai UL
+119,TÂY NAM BỘ,Chi nhánh Kiên Giang UL
+121,ĐÔNG NAM BỘ,Chi nhánh Bình Thuận UL
+122,ĐÔNG NAM BỘ,Chi nhánh Bình Phước UL
+123,TÂY NGUYÊN,Chi nhánh Lâm Đồng UM
+120,TÂY NGUYÊN,Chi nhánh Lâm Đồng UL
+80,MIỀN TRUNG,Chi nhánh Khánh Hòa UL

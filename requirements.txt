@@ -1,0 +1,17 @@
+python-dotenv
+pandas
+numpy
+SQLAlchemy
+psycopg2-binary
+joblib
+lightgbm
+crewai
+crewai-tools
+openai
+langchain
+langchain-openai
+scikit-learn
+seaborn
+matplotlib
+huggingface-hub
+

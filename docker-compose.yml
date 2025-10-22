@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: brick-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: brickdemand
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5433:5432"
+    volumes:
+      # Tự động chạy các script và COPY CSV lúc khởi tạo
+      - ./init:/docker-entrypoint-initdb.d
+      # Lưu dữ liệu postgres
+      - ./pgdata:/var/lib/postgresql/data

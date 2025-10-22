@@ -1,0 +1,50 @@
+# Python virtual environment
+venv/
+.venv/
+.env
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variable files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+coverage.xml
+htmlcov/
+.coverage
+
+# Logs and runtime files
+*.log
+*.pid
+*.seed
+
+# Databases
+*.sqlite3
+*.db
+
+# Files
+Data_FSKU.csv
