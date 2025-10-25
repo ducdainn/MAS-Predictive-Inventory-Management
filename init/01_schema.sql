@@ -9,6 +9,14 @@ CREATE TABLE branch (
   branch_name   TEXT    NOT NULL
 );
 
+-- BRANCH DISTANCE
+DROP TABLE IF EXISTS branch_distance CASCADE;
+CREATE TABLE branch_distance (
+  branch_code_1 INTEGER NOT NULL,
+  branch_code_2 INTEGER NOT NULL,
+  distance_km   NUMERIC(12,2) NOT NULL
+);
+
 -- PRODUCT MASTER
 DROP TABLE IF EXISTS product CASCADE;
 CREATE TABLE product (

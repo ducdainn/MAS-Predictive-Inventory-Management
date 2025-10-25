@@ -6,6 +6,10 @@ COPY branch (branch_code, region, branch_name)
 FROM '/docker-entrypoint-initdb.d/data/branch.csv'
 WITH (FORMAT csv, HEADER true);
 
+COPY branch_distance (branch_code_1, branch_code_2, distance_km)
+FROM '/docker-entrypoint-initdb.d/data/branch_distance.csv'
+WITH (FORMAT csv, HEADER true);
+
 COPY product (product_code, product_name, category, f_sku, spec_code_size, unit)
 FROM '/docker-entrypoint-initdb.d/data/product.csv'
 WITH (FORMAT csv, HEADER true);
