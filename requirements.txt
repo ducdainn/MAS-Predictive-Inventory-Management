@@ -1,6 +1,7 @@
 python-dotenv
 pandas
 numpy
+scipy
 SQLAlchemy
 psycopg2-binary
 joblib
@@ -14,4 +15,5 @@ scikit-learn
 seaborn
 matplotlib
 huggingface-hub
+streamlit
 

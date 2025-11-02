@@ -1,0 +1,31 @@
+# BrickDemand Streamlit UI Requirements
+
+# Core
+streamlit>=1.28.0
+python-dotenv>=1.0.0
+
+# Data & Analytics
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# LLM & AI
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-huggingface>=0.0.1
+langchain-core>=0.1.0
+openai>=1.0.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.14.0
+pillow>=10.0.0
+
+# Excel Export
+openpyxl>=3.1.0
+

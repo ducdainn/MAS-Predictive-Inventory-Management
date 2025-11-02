@@ -412,8 +412,8 @@ class EntityExtractor:
             branches_df = self.db.execute_query("SELECT branch_code, branch_name, region FROM branch")
             self.branches = branches_df.to_dict('records')
             
-            # Get all products
-            products_df = self.db.execute_query("SELECT product_code, product_name FROM product LIMIT 1000")
+            # Get all products (no limit)
+            products_df = self.db.execute_query("SELECT product_code, product_name FROM product")
             self.products = products_df.to_dict('records')
             
             print(f"✅ Loaded {len(self.branches)} branches and {len(self.products)} products for entity matching")
@@ -1107,18 +1107,18 @@ class SmartInsightsGenerator:
         prompt = ChatPromptTemplate.from_messages([
             ("system", self._get_insights_prompt()),
             ("human", """
-Analyze this inventory optimization and provide strategic insights:
+Phân tích kết quả tối ưu hóa tồn kho này và đưa ra những hiểu biết chiến lược BẰNG TIẾNG VIỆT:
 
 {context}
 
-Provide:
-1. KEY FINDINGS (3-5 bullet points)
-2. RISK AREAS (critical issues)
-3. OPPORTUNITIES (cost savings, efficiency)
-4. STRATEGIC RECOMMENDATIONS (actionable steps)
-5. PRIORITY ACTIONS (what to do first)
+Hãy cung cấp:
+1. PHÁT HIỆN CHÍNH (3-5 điểm)
+2. CÁC VÙNG RỦI RO (vấn đề quan trọng)
+3. CƠ HỘI (tiết kiệm chi phí, hiệu quả)
+4. KHUYẾN NGHỊ CHIẾN LƯỢC (các bước có thể thực hiện)
+5. HÀNH ĐỘNG ƯU TIÊN (làm gì trước tiên)
 
-Be specific, data-driven, and actionable.
+Hãy cụ thể, dựa trên dữ liệu và có thể hành động được.
 """)
         ])
         
@@ -1132,37 +1132,39 @@ Be specific, data-driven, and actionable.
             return self._fallback_insights(recommendations, action_plan)
     
     def _get_insights_prompt(self) -> str:
-        return """You are an expert inventory management consultant with 15+ years experience.
+        return """Bạn là chuyên gia tư vấn quản lý tồn kho với hơn 15 năm kinh nghiệm.
 
-Your role: Analyze inventory optimization results and provide strategic insights.
+Vai trò của bạn: Phân tích kết quả tối ưu hóa tồn kho và đưa ra những hiểu biết chiến lược.
 
-Guidelines:
-- Be specific and data-driven
-- Focus on business impact (cost, service level, risk)
-- Identify patterns and trends
-- Provide actionable recommendations
-- Prioritize by urgency and impact
-- Use clear, professional language
+Hướng dẫn:
+- Cụ thể và dựa trên dữ liệu
+- Tập trung vào tác động kinh doanh (chi phí, mức dịch vụ, rủi ro)
+- Xác định các mẫu và xu hướng
+- Đưa ra khuyến nghị có thể thực hiện được
+- Ưu tiên theo mức độ khẩn cấp và tác động
+- Sử dụng ngôn ngữ chuyên nghiệp, rõ ràng
 
-Format insights as:
-📊 KEY FINDINGS
-- [Finding 1 with data]
-- [Finding 2 with data]
+**QUAN TRỌNG: Trả lời HOÀN TOÀN BẰNG TIẾNG VIỆT**
 
-⚠️ RISK AREAS
-- [Risk with impact]
-- [Mitigation strategy]
+Định dạng insights như sau:
+📊 PHÁT HIỆN CHÍNH
+- [Phát hiện 1 với dữ liệu cụ thể]
+- [Phát hiện 2 với dữ liệu cụ thể]
 
-💡 OPPORTUNITIES
-- [Opportunity with benefit]
+⚠️ CÁC VÙNG RỦI RO
+- [Rủi ro và tác động]
+- [Chiến lược giảm thiểu]
 
-🎯 STRATEGIC RECOMMENDATIONS
-1. [Specific action]
-2. [Specific action]
+💡 CƠ HỘI
+- [Cơ hội với lợi ích cụ thể]
 
-🔴 PRIORITY ACTIONS (Next 24-48 hours)
-1. [Urgent action]
-2. [Urgent action]"""
+🎯 KHUYẾN NGHỊ CHIẾN LƯỢC
+1. [Hành động cụ thể]
+2. [Hành động cụ thể]
+
+🔴 HÀNH ĐỘNG ƯU TIÊN (24-48 giờ tới)
+1. [Hành động khẩn cấp]
+2. [Hành động khẩn cấp]"""
     
     def _prepare_context(self, 
                         recommendations: pd.DataFrame,
@@ -1223,27 +1225,27 @@ Format insights as:
         return "\n".join(context)
     
     def _fallback_insights(self, recommendations: pd.DataFrame, action_plan: Dict) -> str:
-        """Simple rule-based insights if LLM fails."""
+        """Insights dự phòng dựa trên quy tắc nếu LLM thất bại."""
         insights = []
         summary = action_plan['summary']
         
-        insights.append("📊 KEY FINDINGS")
-        insights.append(f"- {summary['total_actions']} total actions required across inventory")
-        insights.append(f"- {summary['high_priority_actions']} high-priority items need immediate attention")
+        insights.append("📊 PHÁT HIỆN CHÍNH")
+        insights.append(f"- Cần {summary['total_actions']} hành động tổng cộng cho tồn kho")
+        insights.append(f"- {summary['high_priority_actions']} mặt hàng ưu tiên cao cần chú ý ngay lập tức")
         
         if summary['transfer_actions'] > 0:
             savings_pct = (summary['total_transfer_quantity'] / (summary['total_restock_quantity'] + summary['total_transfer_quantity'])) * 100
-            insights.append(f"- {savings_pct:.1f}% of needs can be met through internal transfers (cost savings)")
+            insights.append(f"- {savings_pct:.1f}% nhu cầu có thể đáp ứng qua chuyển kho nội bộ (tiết kiệm chi phí)")
         
-        insights.append("\n⚠️ RISK AREAS")
+        insights.append("\n⚠️ CÁC VÙNG RỦI RO")
         urgent = recommendations[recommendations['action'] == 'URGENT_RESTOCK']
         if not urgent.empty:
-            insights.append(f"- {len(urgent)} items critically low (stockout risk)")
+            insights.append(f"- {len(urgent)} mặt hàng ở mức tồn kho rất thấp (nguy cơ hết hàng)")
         
-        insights.append("\n🎯 PRIORITY ACTIONS")
-        insights.append("1. Process all HIGH priority restocks immediately")
-        insights.append("2. Initiate internal transfers to reduce external orders")
-        insights.append("3. Review forecast accuracy for items with large discrepancies")
+        insights.append("\n🎯 HÀNH ĐỘNG ƯU TIÊN")
+        insights.append("1. Xử lý tất cả đơn nhập hàng ưu tiên CAO ngay lập tức")
+        insights.append("2. Khởi động chuyển kho nội bộ để giảm đặt hàng bên ngoài")
+        insights.append("3. Xem xét độ chính xác dự báo cho các mặt hàng có chênh lệch lớn")
         
         return "\n".join(insights)
 
