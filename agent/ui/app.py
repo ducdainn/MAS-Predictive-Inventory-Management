@@ -226,70 +226,51 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
+# Initialize session state and auto-load system
 if 'orchestrator' not in st.session_state:
     st.session_state.orchestrator = None
     st.session_state.initialized = False
     st.session_state.last_result = None
     st.session_state.query_history = []
+    st.session_state.init_error = None
+    
+    # Auto-initialize system on first load
+    try:
+        from agent.core.orchestrator_loader import initialize_system
+        st.session_state.orchestrator = initialize_system()
+        st.session_state.initialized = True
+    except Exception as e:
+        st.session_state.init_error = str(e)
+        st.session_state.initialized = False
 
 # Render sidebar
 page = sidebar.render()
 
 # Main content
 if not st.session_state.initialized:
-    # Welcome page
-    st.title("🧱 BrickDemand Inventory AI")
-    st.markdown("### Predictive Inventory Management System")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.info("**🔮 Demand Forecasting**\n\nAI-powered predictions for future demand")
-    
-    with col2:
-        st.info("**📊 Smart Analytics**\n\nInteractive charts and insights")
-    
-    with col3:
-        st.info("**🎯 Optimization**\n\nIntelligent restock & transfer recommendations")
-    
-    st.markdown("---")
-    
-    st.markdown("""
-    ## 🚀 Getting Started
-    
-    1. Click **"Initialize System"** in the sidebar
-    2. Choose your analysis type
-    3. Enter your question or select a branch
-    4. Get AI-powered recommendations!
-    
-    ## 🌟 Features
-    
-    - **Multi-Agent AI System**: Intent classification, entity extraction, smart insights
-    - **Per-Item Forecasting**: Individual demand predictions for each product-branch
-    - **Inventory Optimization**: ROP, Safety Stock, EOQ calculations
-    - **Transfer Optimization**: Find nearby branches with surplus stock
-    - **Export & Reports**: Excel, CSV, and visualizations
-    
-    ## 📊 Supported Analyses
-    
-    - **Inventory Optimization**: Check stock levels, restock recommendations
-    - **Demand Forecasting**: Predict future sales for planning
-    - **Analytics**: Top products, sales trends, distributions
-    
-    """)
-    
-    if st.button("🚀 Initialize System", type="primary", use_container_width=True):
-        with st.spinner("Initializing Multi-Agent System..."):
-            try:
-                from agent.core.orchestrator_loader import initialize_system
-                st.session_state.orchestrator = initialize_system()
-                st.session_state.initialized = True
-                st.success("✅ System initialized successfully!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Initialization failed: {e}")
-                st.exception(e)
+    # Show error if initialization failed
+    if st.session_state.init_error:
+        st.title("❌ System Initialization Failed")
+        st.error(f"**Error:** {st.session_state.init_error}")
+        
+        st.markdown("---")
+        st.markdown("""
+        ### 🔧 Troubleshooting
+        
+        Please check:
+        1. Database connection settings
+        2. Environment variables (HUGGINGFACEHUB_API_TOKEN, OPENAI_API_KEY)
+        3. Required packages installed
+        
+        """)
+        
+        if st.button("🔄 Retry Initialization", type="primary"):
+            st.session_state.init_error = None
+            st.rerun()
+    else:
+        # Show loading spinner (this should rarely be seen due to auto-init)
+        with st.spinner("🚀 Initializing Multi-Agent System..."):
+            st.info("System is loading, please wait...")
 
 else:
     # Render selected page

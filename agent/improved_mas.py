@@ -16,6 +16,7 @@ Author: AI Assistant
 Date: 2025-10-23
 """
 
+from agent.label_formatter import QuickLabelFormatter, format_axis_label
 import os
 import re
 import json
@@ -777,6 +778,28 @@ FOR ANALYTICS QUERIES:
 
 
 # ============================================================================
+
+# ============================================================================
+# DATAFRAME FORMATTER HELPER
+# ============================================================================
+
+def format_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Format DataFrame column names to beautiful Vietnamese labels."""
+    from agent.label_formatter import QuickLabelFormatter
+    
+    if df is None or df.empty:
+        return df
+    
+    formatter = QuickLabelFormatter()
+    
+    # Rename columns
+    new_columns = {}
+    for col in df.columns:
+        new_columns[col] = formatter.format_label(str(col))
+    
+    return df.rename(columns=new_columns)
+
+
 # ANALYTICS AGENT
 # ============================================================================
 
@@ -797,14 +820,18 @@ class AnalyticsAgent:
         if df.empty:
             return {"success": False, "message": "No data returned", "data": df}
         
-        print(f"✅ Retrieved {len(df)} rows")
+        print(f"✅ Retrieved {len(df)} rows with {len(df.columns)} columns")
         
+        # Create charts with raw df (needs raw column names)
         charts = self._create_charts(df, question)
         summary = self._generate_summary(df)
         
+        # Format column names for display (Vietnamese labels)
+        df_display = format_dataframe_columns(df)
+        
         return {
             "success": True,
-            "data": df,
+            "data": df_display,  # Return formatted DataFrame
             "summary": summary,
             "charts": charts,
             "row_count": len(df)
@@ -844,12 +871,18 @@ class AnalyticsAgent:
         return charts
     
     def _plot_time_series(self, df: pd.DataFrame, date_col: str, value_col: str) -> str:
-        """Create time series plot."""
+        """Plot time series with beautiful labels."""
+        from agent.label_formatter import QuickLabelFormatter
+        
+        formatter = QuickLabelFormatter()
+        labels = formatter.format_chart_labels(date_col, value_col)
+        
         plt.figure(figsize=(12, 6))
-        plt.plot(df[date_col], df[value_col], marker='o', linewidth=2)
-        plt.xlabel(date_col, fontsize=12)
-        plt.ylabel(value_col, fontsize=12)
-        plt.title(f'Time Series: {value_col} over {date_col}', fontsize=14, fontweight='bold')
+        sns.lineplot(data=df, x=date_col, y=value_col, linewidth=2.5, color='steelblue')
+        
+        plt.xlabel(labels['x'], fontsize=12, fontweight='bold')
+        plt.ylabel(labels['y'], fontsize=12, fontweight='bold')
+        plt.title(labels['title'], fontsize=14, fontweight='bold', pad=20)
         plt.xticks(rotation=45)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -859,19 +892,22 @@ class AnalyticsAgent:
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
         plt.close()
         
-        print(f"📈 Created time series chart: {filepath}")
         return filepath
     
     def _plot_bar_chart(self, df: pd.DataFrame, cat_col: str, value_col: str) -> str:
-        """Create bar chart."""
+        """Create bar chart with Vietnamese labels."""
         df_plot = df.nlargest(20, value_col) if len(df) > 20 else df
+        
+        # Format labels for display
+        cat_label = format_axis_label(cat_col)
+        value_label = format_axis_label(value_col)
         
         plt.figure(figsize=(12, 6))
         plt.bar(range(len(df_plot)), df_plot[value_col], color='steelblue')
         plt.xticks(range(len(df_plot)), df_plot[cat_col], rotation=45, ha='right')
-        plt.xlabel(cat_col, fontsize=12)
-        plt.ylabel(value_col, fontsize=12)
-        plt.title(f'{value_col} by {cat_col}', fontsize=14, fontweight='bold')
+        plt.xlabel(cat_label, fontsize=12, fontweight='bold')
+        plt.ylabel(value_label, fontsize=12, fontweight='bold')
+        plt.title(f'{value_label} theo {cat_label}', fontsize=14, fontweight='bold')
         plt.grid(True, alpha=0.3, axis='y')
         plt.tight_layout()
         
@@ -884,12 +920,15 @@ class AnalyticsAgent:
         return filepath
     
     def _plot_distribution(self, df: pd.DataFrame, col: str) -> str:
-        """Create distribution plot."""
+        """Create distribution plot with Vietnamese labels."""
+        # Format label for display
+        col_label = format_axis_label(col)
+        
         plt.figure(figsize=(10, 6))
         plt.hist(df[col].dropna(), bins=30, color='skyblue', edgecolor='black', alpha=0.7)
-        plt.xlabel(col, fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.title(f'Distribution of {col}', fontsize=14, fontweight='bold')
+        plt.xlabel(col_label, fontsize=12, fontweight='bold')
+        plt.ylabel('Tần Suất', fontsize=12, fontweight='bold')
+        plt.title(f'Phân Phối của {col_label}', fontsize=14, fontweight='bold')
         plt.grid(True, alpha=0.3, axis='y')
         plt.tight_layout()
         
@@ -903,15 +942,22 @@ class AnalyticsAgent:
     
     def _generate_summary(self, df: pd.DataFrame) -> str:
         """Generate text summary of results."""
-        summary = f"Retrieved {len(df)} rows with {len(df.columns)} columns.\n\n"
+        # Format column names for display
+        df_display = format_dataframe_columns(df)
         
+        summary = f"Retrieved {len(df_display)} rows with {len(df_display.columns)} columns.\n\n"
+        
+        # Use raw df for numeric operations, but display formatted names
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         if len(numeric_cols) > 0:
             summary += "Numeric summary:\n"
             for col in numeric_cols[:3]:
-                summary += f"  - {col}: min={df[col].min():.2f}, max={df[col].max():.2f}, mean={df[col].mean():.2f}\n"
+                # Get formatted column name
+                formatted_col = format_dataframe_columns(df[[col]]).columns[0]
+                summary += f"  - {formatted_col}: min={df[col].min():.2f}, max={df[col].max():.2f}, mean={df[col].mean():.2f}\n"
         
-        summary += f"\nFirst 5 rows:\n{df.head().to_string()}\n"
+        # Use formatted df for display
+        summary += f"\nFirst 5 rows:\n{df_display.head().to_string()}\n"
         return summary
 
 
@@ -948,10 +994,14 @@ class ForecastAgent:
         chart_path = self._plot_forecast(df_ts, forecast_result, value_col)
         metrics = self._calculate_metrics(df_ts, forecast_result)
         
+        # Format DataFrames for display (Vietnamese labels)
+        df_ts_display = format_dataframe_columns(df_ts.reset_index()).set_index(df_ts.index.name or 'index')
+        forecast_display = format_dataframe_columns(forecast_result.reset_index()).set_index(forecast_result.index.name or 'index')
+        
         return {
             "success": True,
-            "historical_data": df_ts,
-            "forecast": forecast_result,
+            "historical_data": df_ts_display,
+            "forecast": forecast_display,
             "chart": chart_path,
             "metrics": metrics,
             "summary": self._generate_forecast_summary(df_ts, forecast_result)
@@ -1017,17 +1067,20 @@ class ForecastAgent:
         return forecast_df
     
     def _plot_forecast(self, df_ts: pd.DataFrame, forecast_df: pd.DataFrame, value_name: str) -> str:
-        """Plot historical data and forecast."""
+        """Plot historical data and forecast with Vietnamese labels."""
+        # Format label for display
+        value_label = format_axis_label(value_name)
+        
         plt.figure(figsize=(14, 7))
         
         recent = df_ts.tail(90)
-        plt.plot(recent.index, recent['value'], label='Historical', linewidth=2, color='steelblue')
-        plt.plot(forecast_df.index, forecast_df['forecast'], label='Forecast', 
+        plt.plot(recent.index, recent['value'], label='Dữ Liệu Lịch Sử', linewidth=2, color='steelblue')
+        plt.plot(forecast_df.index, forecast_df['forecast'], label='Dự Báo', 
                 linewidth=2, color='orange', linestyle='--', marker='o', markersize=4)
         
-        plt.xlabel('Date', fontsize=12)
-        plt.ylabel(value_name, fontsize=12)
-        plt.title('Sales Forecast', fontsize=14, fontweight='bold')
+        plt.xlabel('Ngày', fontsize=12, fontweight='bold')
+        plt.ylabel(value_label, fontsize=12, fontweight='bold')
+        plt.title(f'Dự Báo {value_label}', fontsize=14, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(True, alpha=0.3)
         plt.xticks(rotation=45)
@@ -1371,11 +1424,16 @@ class InventoryOptimizationAgent:
             
             print(f"✅ Optimization complete: {len(plan['actions'])} actions recommended")
             
+            # Format DataFrames for display (Vietnamese labels)
+            inventory_data_display = format_dataframe_columns(inventory_data)
+            recommendations_display = format_dataframe_columns(recommendations)
+            
             return {
                 "success": True,
                 "per_item_forecasts": per_item_forecasts,
-                "inventory_data": inventory_data,
-                "recommendations": recommendations,
+                "inventory_data": inventory_data_display,
+                "recommendations": recommendations_display,
+                "recommendations_raw": recommendations,  # Keep raw for UI filtering
                 "transfer_opportunities": transfer_opportunities,
                 "action_plan": plan,
                 "chart": chart_path,
@@ -1983,11 +2041,11 @@ class InventoryOptimizationAgent:
         x = np.arange(len(labels))
         width = 0.25
         
-        bars1 = ax1.bar(x - width, current_stock, width, label='Current Stock', 
+        bars1 = ax1.bar(x - width, current_stock, width, label='Tồn Kho Hiện Tại', 
                         color='steelblue', alpha=0.8)
-        bars2 = ax1.bar(x, rop, width, label='Reorder Point (ROP)', 
+        bars2 = ax1.bar(x, rop, width, label='Điểm Đặt Hàng (ROP)', 
                         color='orange', alpha=0.8)
-        bars3 = ax1.bar(x + width, safety_stock, width, label='Safety Stock', 
+        bars3 = ax1.bar(x + width, safety_stock, width, label='Tồn Kho An Toàn', 
                         color='green', alpha=0.8)
         
         # Add value labels on bars
@@ -1999,9 +2057,9 @@ class InventoryOptimizationAgent:
                             f'{int(height)}',
                             ha='center', va='bottom', fontsize=7)
         
-        ax1.set_xlabel('Product @ Branch', fontsize=11, fontweight='bold')
-        ax1.set_ylabel('Quantity', fontsize=11, fontweight='bold')
-        ax1.set_title('Current Stock vs ROP & Safety Stock (Top 10 Items)', 
+        ax1.set_xlabel('Sản Phẩm @ Chi Nhánh', fontsize=11, fontweight='bold')
+        ax1.set_ylabel('Số Lượng', fontsize=11, fontweight='bold')
+        ax1.set_title('Tồn Kho Hiện Tại vs ROP & Tồn Kho An Toàn (Top 10)', 
                       fontsize=12, fontweight='bold', pad=10)
         ax1.set_xticks(x)
         ax1.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
@@ -2011,8 +2069,19 @@ class InventoryOptimizationAgent:
         # Plot 2: Action Distribution by Branch
         ax2 = axes[0, 1]
         action_counts = recommendations['action'].value_counts()
-        colors = {'OK': '#2ecc71', 'RESTOCK': '#f39c12', 
-                  'URGENT_RESTOCK': '#e74c3c', 'SURPLUS': '#3498db'}
+        
+        # Translate action labels to Vietnamese
+        action_translation = {
+            'OK': 'Đủ Hàng',
+            'RESTOCK': 'Cần Nhập',
+            'URGENT_RESTOCK': 'Nhập Gấp',
+            'SURPLUS': 'Thừa Hàng',
+            'TRANSFER': 'Chuyển Kho'
+        }
+        action_counts.index = [action_translation.get(x, x) for x in action_counts.index]
+        
+        colors = {'Đủ Hàng': '#2ecc71', 'Cần Nhập': '#f39c12', 
+                  'Nhập Gấp': '#e74c3c', 'Thừa Hàng': '#3498db', 'Chuyển Kho': '#9b59b6'}
         
         wedges, texts, autotexts = ax2.pie(
             action_counts.values, 
@@ -2027,7 +2096,7 @@ class InventoryOptimizationAgent:
         for i, (label, count) in enumerate(zip(action_counts.index, action_counts.values)):
             texts[i].set_text(f'{label}\n({count} items)')
         
-        ax2.set_title('Inventory Action Distribution', 
+        ax2.set_title('Phân Phối Hành Động Tồn Kho', 
                       fontsize=12, fontweight='bold', pad=10)
         
         # Plot 3: Aggregated Demand Forecast
@@ -2055,11 +2124,11 @@ class InventoryOptimizationAgent:
             # Add mean line
             mean_val = total_forecast.mean()
             ax3.axhline(y=mean_val, color='green', linestyle=':', 
-                       linewidth=1.5, alpha=0.7, label=f'Average: {mean_val:.0f}')
+                       linewidth=1.5, alpha=0.7, label=f'Trung Bình: {mean_val:.0f}')
             
-            ax3.set_xlabel('Date', fontsize=11, fontweight='bold')
-            ax3.set_ylabel('Quantity', fontsize=11, fontweight='bold')
-            ax3.set_title(f'30-Day Demand Forecast - {branch_title}', 
+            ax3.set_xlabel('Ngày', fontsize=11, fontweight='bold')
+            ax3.set_ylabel('Số Lượng', fontsize=11, fontweight='bold')
+            ax3.set_title(f'Dự Báo Nhu Cầu 30 Ngày - {branch_title}', 
                          fontsize=12, fontweight='bold', pad=10)
             ax3.legend(loc='best', fontsize=9)
             ax3.grid(True, alpha=0.3, linestyle='--')
@@ -2070,7 +2139,7 @@ class InventoryOptimizationAgent:
             ax3.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
             ax3.xaxis.set_major_locator(mdates.DayLocator(interval=5))
         else:
-            ax3.text(0.5, 0.5, 'No forecast data available', 
+            ax3.text(0.5, 0.5, 'Không có dữ liệu dự báo', 
                     ha='center', va='center', fontsize=12)
         
         # Plot 4: Priority Distribution by Branch
@@ -2092,20 +2161,20 @@ class InventoryOptimizationAgent:
                         f'{int(height)}',
                         ha='center', va='bottom', fontsize=11, fontweight='bold')
             
-            ax4.set_xlabel('Priority Level', fontsize=11, fontweight='bold')
-            ax4.set_ylabel('Number of Actions', fontsize=11, fontweight='bold')
-            ax4.set_title('Action Priority Distribution', 
+            ax4.set_xlabel('Mức Độ Ưu Tiên', fontsize=11, fontweight='bold')
+            ax4.set_ylabel('Số Lượng Hành Động', fontsize=11, fontweight='bold')
+            ax4.set_title('Phân Phối Ưu Tiên Hành Động', 
                          fontsize=12, fontweight='bold', pad=10)
             ax4.grid(True, alpha=0.3, axis='y', linestyle='--')
             
             # Add summary text
             total_actions = len(priority_data)
-            summary_text = f'Total Actions: {total_actions}'
+            summary_text = f'Tổng Số Hành Động: {total_actions}'
             ax4.text(0.5, 0.95, summary_text, transform=ax4.transAxes,
                     ha='center', va='top', fontsize=9, 
                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
         else:
-            ax4.text(0.5, 0.5, '✓ All Items OK\nNo Actions Needed', 
+            ax4.text(0.5, 0.5, '✓ Tất Cả Đều Ổn\nKhông Cần Hành Động', 
                     ha='center', va='center', fontsize=14, color='green', fontweight='bold')
         
         plt.tight_layout(rect=[0, 0, 1, 0.99])
@@ -2361,15 +2430,15 @@ def export_inventory_plan_to_excel(result: Dict[str, Any], filename: str = "inve
         print(f"📝 Creating Excel file: {filename}")
         
         with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-            # Sheet 1: Summary
+            # Sheet 1: Summary (with Vietnamese labels)
             summary_data = {
                 'Metric': [
-                    'Total Actions',
-                    'Restock Orders',
-                    'Transfer Opportunities',
-                    'High Priority Actions',
-                    'Total Restock Quantity',
-                    'Total Transfer Quantity'
+                    'Tổng Số Hành Động',
+                    'Đơn Nhập Hàng',
+                    'Cơ Hội Chuyển Kho',
+                    'Hành Động Ưu Tiên Cao',
+                    'Tổng Số Lượng Nhập',
+                    'Tổng Số Lượng Chuyển'
                 ],
                 'Value': [
                     action_plan['summary']['total_actions'],
@@ -2380,32 +2449,37 @@ def export_inventory_plan_to_excel(result: Dict[str, Any], filename: str = "inve
                     action_plan['summary']['total_transfer_quantity']
                 ]
             }
-            pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+            summary_df = pd.DataFrame(summary_data)
+            summary_df = format_dataframe_columns(summary_df)
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
             print(f"   ✓ Sheet 1: Summary")
             
-            # Sheet 2: Restock Orders
+            # Sheet 2: Restock Orders (formatted)
             restock_actions = [a for a in action_plan['actions'] if a['action_type'] == 'RESTOCK']
             if restock_actions:
                 restock_df = pd.DataFrame(restock_actions)
+                restock_df = format_dataframe_columns(restock_df)
                 restock_df.to_excel(writer, sheet_name='Restock Orders', index=False)
                 print(f"   ✓ Sheet 2: Restock Orders ({len(restock_actions)} items)")
             
-            # Sheet 3: Transfer Opportunities
+            # Sheet 3: Transfer Opportunities (formatted)
             transfer_actions = [a for a in action_plan['actions'] if a['action_type'] == 'TRANSFER']
             if transfer_actions:
                 transfer_df = pd.DataFrame(transfer_actions)
+                transfer_df = format_dataframe_columns(transfer_df)
                 transfer_df.to_excel(writer, sheet_name='Transfers', index=False)
                 print(f"   ✓ Sheet 3: Transfers ({len(transfer_actions)} items)")
             
-            # Sheet 4: All Recommendations
+            # Sheet 4: All Recommendations (already formatted from optimize_inventory)
             if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
                 recommendations.to_excel(writer, sheet_name='All Items', index=False)
                 print(f"   ✓ Sheet 4: All Items ({len(recommendations)} items)")
             
-            # Sheet 5: Priority Actions
+            # Sheet 5: Priority Actions (formatted)
             high_priority = [a for a in action_plan['actions'] if a['priority'] == 'HIGH']
             if high_priority:
                 priority_df = pd.DataFrame(high_priority)
+                priority_df = format_dataframe_columns(priority_df)
                 priority_df.to_excel(writer, sheet_name='High Priority', index=False)
                 print(f"   ✓ Sheet 5: High Priority ({len(high_priority)} items)")
         

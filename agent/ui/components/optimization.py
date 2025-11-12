@@ -265,19 +265,30 @@ def display_charts_tab(data):
         except Exception as e:
             st.warning(f"Could not load chart: {e}")
     
-    # Interactive Plotly charts
-    if data.get('recommendations') is not None and not data['recommendations'].empty:
-        recs = data['recommendations']
+    # Interactive Plotly charts - use raw data for filtering
+    if data.get('recommendations_raw') is not None and not data['recommendations_raw'].empty:
+        recs = data['recommendations_raw']  # Use raw data with English columns
         
         col1, col2 = st.columns(2)
         
         with col1:
             # Action distribution
             action_counts = recs['action'].value_counts()
+            
+            # Translate action labels to Vietnamese
+            action_translation = {
+                'OK': 'Đủ Hàng',
+                'RESTOCK': 'Cần Nhập',
+                'URGENT_RESTOCK': 'Nhập Gấp',
+                'SURPLUS': 'Thừa Hàng',
+                'TRANSFER': 'Chuyển Kho'
+            }
+            translated_index = [action_translation.get(x, x) for x in action_counts.index]
+            
             fig = px.pie(
                 values=action_counts.values,
-                names=action_counts.index,
-                title="Action Distribution",
+                names=translated_index,
+                title="Phân Phối Hành Động",
                 color_discrete_sequence=px.colors.qualitative.Set3
             )
             st.plotly_chart(fig, use_container_width=True)
@@ -285,11 +296,16 @@ def display_charts_tab(data):
         with col2:
             # Priority distribution
             priority_counts = recs[recs['action'] != 'OK']['priority'].value_counts()
+            
+            # Translate priority labels
+            priority_translation = {'HIGH': 'Cao', 'MEDIUM': 'Trung Bình', 'LOW': 'Thấp'}
+            translated_priority = [priority_translation.get(x, x) for x in priority_counts.index]
+            
             fig = px.bar(
-                x=priority_counts.index,
+                x=translated_priority,
                 y=priority_counts.values,
-                title="Priority Distribution",
-                labels={'x': 'Priority', 'y': 'Count'},
+                title="Phân Phối Ưu Tiên",
+                labels={'x': 'Mức Độ Ưu Tiên', 'y': 'Số Lượng'},
                 color=priority_counts.index,
                 color_discrete_map={'HIGH': '#e74c3c', 'MEDIUM': '#f39c12', 'LOW': '#f1c40f'}
             )
@@ -334,54 +350,67 @@ def display_data_tab(data):
     
     st.markdown("### 📦 Detailed Recommendations")
     
+    # Use formatted data for display
     if data.get('recommendations') is not None and not data['recommendations'].empty:
-        recs = data['recommendations']
+        recs_display = data['recommendations']  # Formatted (Vietnamese columns)
+        recs_raw = data.get('recommendations_raw', recs_display)  # Raw for filtering
         
-        # Filters
+        # Filters (using raw data for options)
         col1, col2, col3 = st.columns(3)
         
         with col1:
             actions_filter = st.multiselect(
-                "Filter by Action",
-                options=recs['action'].unique(),
+                "Lọc theo Hành Động",
+                options=recs_raw['action'].unique() if 'action' in recs_raw.columns else [],
                 default=None
             )
         
         with col2:
             priority_filter = st.multiselect(
-                "Filter by Priority",
+                "Lọc theo Ưu Tiên",
                 options=['HIGH', 'MEDIUM', 'LOW'],
                 default=None
             )
         
         with col3:
             branch_filter = st.multiselect(
-                "Filter by Branch",
-                options=recs['branch_name'].unique(),
+                "Lọc theo Chi Nhánh",
+                options=recs_raw['branch_name'].unique() if 'branch_name' in recs_raw.columns else [],
                 default=None
             )
         
-        # Apply filters
-        filtered = recs.copy()
+        # Apply filters on raw data, then get indices for display data
+        filtered_indices = recs_raw.index
         if actions_filter:
-            filtered = filtered[filtered['action'].isin(actions_filter)]
+            filtered_indices = filtered_indices.intersection(recs_raw[recs_raw['action'].isin(actions_filter)].index)
         if priority_filter:
-            filtered = filtered[filtered['priority'].isin(priority_filter)]
+            filtered_indices = filtered_indices.intersection(recs_raw[recs_raw['priority'].isin(priority_filter)].index)
         if branch_filter:
-            filtered = filtered[filtered['branch_name'].isin(branch_filter)]
+            filtered_indices = filtered_indices.intersection(recs_raw[recs_raw['branch_name'].isin(branch_filter)].index)
         
-        st.dataframe(
-            filtered[[
-                'product_name', 'branch_name', 'current_stock',
-                'reorder_point', 'action', 'priority', 'quantity_needed'
-            ]],
-            use_container_width=True,
-            hide_index=True
-        )
+        # Display formatted data
+        filtered_display = recs_display.loc[filtered_indices]
         
-        st.caption(f"Showing {len(filtered)} of {len(recs)} items")
+        # Select columns to display (Vietnamese names)
+        display_cols = []
+        for col in recs_display.columns:
+            if any(x in col.lower() for x in ['sản phẩm', 'chi nhánh', 'tồn kho', 'điểm đặt', 'hành động', 'ưu tiên', 'số lượng']):
+                display_cols.append(col)
+                if len(display_cols) >= 7:
+                    break
+        
+        if display_cols:
+            st.dataframe(
+                filtered_display[display_cols],
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.dataframe(filtered_display, use_container_width=True, hide_index=True)
+        
+        st.caption(f"Hiển thị {len(filtered_display)} / {len(recs_display)} sản phẩm")
     else:
-        st.info("No recommendations data available")
+        st.info("Không có dữ liệu recommendations")
 
 
 def display_export_tab(data):

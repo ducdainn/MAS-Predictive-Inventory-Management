@@ -20,8 +20,10 @@ def render():
         # System status
         if st.session_state.get('initialized', False):
             st.success("✅ System Online")
+        elif st.session_state.get('init_error'):
+            st.error("❌ Initialization Failed")
         else:
-            st.warning("⚠️ System Not Initialized")
+            st.info("🔄 Initializing System...")
         
         st.markdown("---")
         
