@@ -68,7 +68,7 @@ def render(orchestrator):
     if run_button and question:
         with st.spinner("🔮 Generating forecast..."):
             try:
-                result = orchestrator.process_query(question)
+                result = orchestrator.process_query(question, forced_intent="FORECAST")
                 
                 st.session_state.last_forecast_result = result
                 st.success(f"✅ Forecast complete in {result.get('elapsed_seconds', 0):.2f}s")
@@ -82,10 +82,58 @@ def render(orchestrator):
     if st.session_state.get('last_forecast_result'):
         result = st.session_state.last_forecast_result
         
-        if result.get('success') and result.get('intent') == 'FORECAST':
+        # Debug: Show what we received
+        intent = result.get('intent', 'UNKNOWN')
+        success = result.get('success', False)
+        
+        # Check if this is a forecast result
+        if success and intent == 'FORECAST':
             display_forecast_results(result)
+        elif intent == 'FORECAST' and not success:
+            # Forecast was attempted but failed
+            st.error("❌ Forecast generation failed")
+            
+            # Get error details
+            error_msg = result.get('error', 'Unknown error')
+            nested_result = result.get('result', {})
+            nested_error = nested_result.get('error', '') if isinstance(nested_result, dict) else ''
+            
+            # Show error message
+            st.warning(f"**Error:** {error_msg or nested_error or 'No data available for forecasting'}")
+            
+            # Troubleshooting tips
+            with st.expander("💡 Troubleshooting Tips"):
+                st.markdown("""
+                **Possible causes:**
+                1. **No historical data** - The query returned no sales data
+                2. **Insufficient data** - Need at least 2 days of data for forecasting
+                3. **SQL error** - The generated query may have issues
+                4. **Branch/Product not found** - Check if the branch/product exists
+                
+                **Solutions:**
+                - Try a broader query (e.g., "Dự báo doanh số tổng thể")
+                - Check if the branch/product has recent sales data
+                - Try a different time period or product
+                """)
+            
+            # Debug info
+            with st.expander("🔍 Debug Info"):
+                st.write(f"**Intent:** `{intent}`")
+                st.write(f"**Success:** `{success}`")
+                st.write(f"**SQL Query:**")
+                st.code(result.get('sql', 'N/A'), language='sql')
+                if nested_result:
+                    st.write(f"**Result Details:**")
+                    st.json(nested_result)
         else:
-            st.warning("Last result is not a forecast. Please run a new forecast.")
+            # Wrong intent
+            st.warning("⚠️ Last result is not a forecast. Please run a new forecast.")
+            with st.expander("🔍 Debug Info"):
+                st.write(f"**Intent detected:** `{intent}`")
+                st.write(f"**Success status:** `{success}`")
+                st.write(f"**Expected:** Intent = 'FORECAST' and Success = True")
+                if intent != 'FORECAST':
+                    st.info(f"💡 This query was classified as **{intent}**. To see forecast results, please ask a forecasting question like 'Dự báo doanh số 30 ngày tới'.")
 
 
 def display_forecast_results(result):

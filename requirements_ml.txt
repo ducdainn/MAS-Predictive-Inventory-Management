@@ -1,0 +1,20 @@
+# ML Forecasting Dependencies
+# =============================
+
+# Core ML libraries (REQUIRED)
+xgboost>=2.0.0          # Gradient boosting (BEST for accuracy)
+lightgbm>=4.0.0         # Fast gradient boosting (BEST for speed)
+scikit-learn>=1.3.0     # ML utilities & baseline models
+prophet>=1.1.5          # Facebook's robust forecaster
+statsmodels>=0.14.0     # Statistical models (SARIMA, Exponential Smoothing)
+
+# Visualization (for benchmarking)
+seaborn>=0.12.0         # Statistical visualizations
+
+# Optional but recommended
+pmdarima>=2.0.4         # Auto-ARIMA for parameter selection
+sktime>=0.24.0          # Time series toolkit
+
+# Performance
+numba>=0.58.0           # Speed up Prophet
+

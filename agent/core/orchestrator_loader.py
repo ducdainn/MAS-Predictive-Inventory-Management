@@ -1,15 +1,16 @@
 """
 Orchestrator loader for Streamlit UI
 Wraps the initialization with caching
+
+UPGRADED: Now uses Advanced Memory System with Vector DB
 """
 
 import streamlit as st
-from agent.improved_mas import (
-    DatabaseManager,
-    MemoryManager,
-    LLMProvider,
-    OrchestratorAgent
-)
+
+from agent.agents.orchestrator_agent import OrchestratorAgent
+from agent.core.llm_provider import LLMProvider
+from agent.manager.database_manager import DatabaseManager
+from agent.manager.memory_manager import MemoryManager  # Advanced memory support
 
 @st.cache_resource
 def initialize_system():

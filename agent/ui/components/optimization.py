@@ -83,7 +83,7 @@ def render(orchestrator):
                 progress_bar.progress(83)
                 
                 # Run optimization
-                result = orchestrator.process_query(question)
+                result = orchestrator.process_query(question, forced_intent="INVENTORY_OPTIMIZATION")
                 
                 status_text.text("Step 6/6: Creating insights...")
                 progress_bar.progress(100)
@@ -117,10 +117,32 @@ def render(orchestrator):
     if st.session_state.get('last_result'):
         result = st.session_state.last_result
         
-        if result.get('success') and result.get('intent') == 'INVENTORY_OPTIMIZATION':
+        # Debug info
+        with st.expander("🔍 Debug: Result Check", expanded=False):
+            st.write(f"**Success:** `{result.get('success')}`")
+            st.write(f"**Intent:** `{result.get('intent')}`")
+            st.write(f"**Has result key:** `{'result' in result}`")
+            if 'result' in result:
+                st.write(f"**Result success:** `{result['result'].get('success')}`")
+            st.write(f"**Keys in result:** `{list(result.keys())}`")
+        
+        # Check if result is valid inventory optimization
+        is_valid = (
+            result.get('success') and 
+            result.get('intent') == 'INVENTORY_OPTIMIZATION' and
+            'result' in result
+        )
+        
+        if is_valid:
             display_optimization_results(result)
         else:
             st.warning("Last result is not an inventory optimization. Please run a new analysis.")
+            
+            # Show error details if available
+            if result.get('error'):
+                st.error(f"Error: {result.get('error')}")
+            elif 'result' in result and result['result'].get('message'):
+                st.error(f"Error: {result['result'].get('message')}")
 
 
 def display_optimization_results(result):
@@ -390,25 +412,129 @@ def display_data_tab(data):
         
         # Display formatted data
         filtered_display = recs_display.loc[filtered_indices]
+        filtered_raw = recs_raw.loc[filtered_indices]
         
-        # Select columns to display (Vietnamese names)
+        # Get forecast data from per_item_forecasts if available
+        per_item_forecasts = data.get('per_item_forecasts', {})
+        
+        # Add forecast columns to display
+        forecast_info = []
+        for idx, row in filtered_raw.iterrows():
+            product_code = row.get('product_code', '')
+            branch_code = row.get('branch_code', '')
+            key = (product_code, branch_code)
+            
+            forecast_data = per_item_forecasts.get(key, {})
+            metrics = forecast_data.get('metrics', {})
+            
+            forecast_info.append({
+                'recent_avg_daily': metrics.get('recent_avg_daily', 0),
+                'forecast_avg_daily': metrics.get('forecast_avg_daily', 0),
+                'forecast_total_30d': metrics.get('forecast_total', row.get('forecast_demand_30d', 0)),
+                'trend': metrics.get('trend', 'unknown')
+            })
+        
+        # Create forecast DataFrame
+        if forecast_info:
+            forecast_df = pd.DataFrame(forecast_info, index=filtered_display.index)
+            
+            # Merge forecast info with display data
+            # Map English forecast columns to Vietnamese for display
+            forecast_display_cols = {
+                'recent_avg_daily': 'Nhu Cầu TB Ngày (Lịch Sử)',
+                'forecast_avg_daily': 'Nhu Cầu TB Ngày (Dự Báo)',
+                'forecast_total_30d': 'Tổng Nhu Cầu 30 Ngày',
+                'trend': 'Xu Hướng'
+            }
+            forecast_df_display = forecast_df.rename(columns=forecast_display_cols)
+            
+            # Format numbers
+            for col in ['Nhu Cầu TB Ngày (Lịch Sử)', 'Nhu Cầu TB Ngày (Dự Báo)', 'Tổng Nhu Cầu 30 Ngày']:
+                if col in forecast_df_display.columns:
+                    forecast_df_display[col] = forecast_df_display[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "0.00")
+        
+        # Select columns to display (Vietnamese names) - include forecast columns
         display_cols = []
-        for col in recs_display.columns:
-            if any(x in col.lower() for x in ['sản phẩm', 'chi nhánh', 'tồn kho', 'điểm đặt', 'hành động', 'ưu tiên', 'số lượng']):
-                display_cols.append(col)
-                if len(display_cols) >= 7:
-                    break
         
-        if display_cols:
-            st.dataframe(
-                filtered_display[display_cols],
-                use_container_width=True,
-                hide_index=True
-            )
+        # Priority columns (always show)
+        priority_keywords = ['sản phẩm', 'chi nhánh', 'tồn kho', 'điểm đặt', 'hành động', 'ưu tiên']
+        for col in recs_display.columns:
+            if any(x in col.lower() for x in priority_keywords):
+                display_cols.append(col)
+        
+        # Add forecast columns if available
+        if forecast_info and 'forecast_df_display' in locals():
+            for col in forecast_df_display.columns:
+                if col not in display_cols:
+                    display_cols.append(col)
+        
+        # Add forecast demand columns from recommendations if not already included
+        forecast_keywords = ['nhu cầu', 'dự báo', 'forecast', 'demand']
+        for col in recs_display.columns:
+            if any(x in col.lower() for x in forecast_keywords) and col not in display_cols:
+                display_cols.append(col)
+        
+        # Combine display data with forecast info
+        if forecast_info and 'forecast_df_display' in locals():
+            combined_display = pd.concat([filtered_display, forecast_df_display], axis=1)
         else:
-            st.dataframe(filtered_display, use_container_width=True, hide_index=True)
+            combined_display = filtered_display
+        
+        # Display with selected columns
+        if display_cols:
+            # Filter to only show columns that exist
+            available_cols = [col for col in display_cols if col in combined_display.columns]
+            if available_cols:
+                st.dataframe(
+                    combined_display[available_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.dataframe(combined_display, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(combined_display, use_container_width=True, hide_index=True)
         
         st.caption(f"Hiển thị {len(filtered_display)} / {len(recs_display)} sản phẩm")
+        
+        # Add forecast summary metrics
+        if forecast_info:
+            st.markdown("---")
+            st.markdown("### 📊 Tóm Tắt Nhu Cầu Dự Báo")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                total_forecast = sum(f.get('forecast_total_30d', 0) for f in forecast_info)
+                st.metric(
+                    "Tổng Nhu Cầu 30 Ngày",
+                    f"{total_forecast:,.0f}",
+                    help="Tổng nhu cầu dự báo cho tất cả sản phẩm trong 30 ngày tới"
+                )
+            
+            with col2:
+                avg_daily = sum(f.get('forecast_avg_daily', 0) for f in forecast_info) / len(forecast_info) if forecast_info else 0
+                st.metric(
+                    "Nhu Cầu TB Ngày",
+                    f"{avg_daily:.2f}",
+                    help="Nhu cầu trung bình hàng ngày từ dự báo"
+                )
+            
+            with col3:
+                increasing_count = sum(1 for f in forecast_info if f.get('trend') == 'increasing')
+                st.metric(
+                    "Xu Hướng Tăng",
+                    f"{increasing_count}",
+                    help="Số sản phẩm có xu hướng nhu cầu tăng"
+                )
+            
+            with col4:
+                recent_avg = sum(f.get('recent_avg_daily', 0) for f in forecast_info) / len(forecast_info) if forecast_info else 0
+                st.metric(
+                    "Nhu Cầu TB (Lịch Sử)",
+                    f"{recent_avg:.2f}",
+                    help="Nhu cầu trung bình hàng ngày từ dữ liệu lịch sử"
+                )
     else:
         st.info("Không có dữ liệu recommendations")
 
@@ -425,7 +551,7 @@ def display_export_tab(data):
     with col1:
         if st.button("📊 Export Excel", use_container_width=True):
             try:
-                from agent.improved_mas import export_inventory_plan_to_excel
+                from agent.agents.orchestrator_agent import export_inventory_plan_to_excel
                 export_inventory_plan_to_excel(
                     {'success': True, 'result': data},
                     "inventory_optimization_plan.xlsx"
@@ -437,7 +563,7 @@ def display_export_tab(data):
     with col2:
         if st.button("📄 Export Forecasts CSV", use_container_width=True):
             try:
-                from agent.improved_mas import export_forecasts_to_csv
+                from agent.agents.orchestrator_agent import export_forecasts_to_csv
                 export_forecasts_to_csv(
                     {'success': True, 'result': data},
                     "forecasts_detail.csv"
@@ -449,7 +575,7 @@ def display_export_tab(data):
     with col3:
         if st.button("📋 Export Recommendations CSV", use_container_width=True):
             try:
-                from agent.improved_mas import export_recommendations_to_csv
+                from agent.agents.orchestrator_agent import export_recommendations_to_csv
                 export_recommendations_to_csv(
                     {'success': True, 'result': data},
                     "recommendations_detail.csv"

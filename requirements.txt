@@ -17,3 +17,8 @@ matplotlib
 huggingface-hub
 streamlit
 
+# Advanced Memory System
+chromadb>=0.4.22
+sentence-transformers>=2.2.2
+redis>=5.0.0
+

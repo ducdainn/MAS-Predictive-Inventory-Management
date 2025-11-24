@@ -2,8 +2,6 @@
 🤖 BrickDemand Predictive Inventory Management System
 Multi-Agent System with Streamlit UI
 
-Author: AI Assistant
-Date: 2025-10-25
 """
 
 import streamlit as st
@@ -18,13 +16,13 @@ from agent.ui.components import sidebar, dashboard, optimization, analytics, for
 
 # Page config
 st.set_page_config(
-    page_title="BrickDemand - Inventory AI",
+    page_title="Predictive Inventory Management System",
     page_icon="🧱",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'Get Help': 'https://github.com/yourusername/brickdemand',
-        'Report a bug': 'https://github.com/yourusername/brickdemand/issues',
+        'Get Help': 'https://github.com/ducdainn/brickdemand',
+        'Report a bug': 'https://github.com/ducdainn/brickdemand/issues',
         'About': '''
         # BrickDemand Inventory AI
         **Predictive Inventory Management System**

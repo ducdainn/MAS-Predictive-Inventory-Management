@@ -59,7 +59,7 @@ def render(orchestrator):
     if run_button and question:
         with st.spinner("🤖 Analyzing data..."):
             try:
-                result = orchestrator.process_query(question)
+                result = orchestrator.process_query(question, forced_intent="ANALYTICS")
                 
                 st.session_state.last_analytics_result = result
                 st.success(f"✅ Analysis complete in {result.get('elapsed_seconds', 0):.2f}s")
@@ -73,10 +73,25 @@ def render(orchestrator):
     if st.session_state.get('last_analytics_result'):
         result = st.session_state.last_analytics_result
         
-        if result.get('success'):
+        if result.get('success') and result.get('result', {}).get('success', True):
             display_analytics_results(result)
         else:
-            st.error("Analysis failed. Please try a different question.")
+            # Show detailed error message
+            error_msg = "Analysis failed. Please try a different question."
+            
+            if result.get('error'):
+                error_msg = f"Error: {result.get('error')}"
+            elif result.get('result', {}).get('message'):
+                error_msg = result['result']['message']
+            elif result.get('result', {}).get('error'):
+                error_msg = f"Error: {result['result']['error']}"
+            
+            st.error(f"❌ {error_msg}")
+            
+            # Show SQL for debugging
+            if result.get('sql'):
+                with st.expander("🔍 Debug: Generated SQL"):
+                    st.code(result['sql'], language='sql')
 
 
 def display_analytics_results(result):
