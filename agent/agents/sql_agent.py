@@ -3,7 +3,7 @@ SQLAgent: generates safe SQL queries from natural language questions.
 """
 
 import re
-from typing import Optional, Dict
+from typing import Any, Dict, Optional
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -19,7 +19,14 @@ class SQLAgent:
         self.llm = llm_provider.get_llm("openai", temperature=0.0)
         self.schema_agent = schema_agent
 
-    def generate_sql(self, question: str, intent: str, entities: Optional[Dict] = None) -> str:
+    def generate_sql(
+        self,
+        question: str,
+        intent: str,
+        entities: Optional[Dict] = None,
+        analysis_plan: Optional[Dict[str, Any]] = None,
+        schema_context: Optional[str] = None
+    ) -> str:
         """
         Generate SQL query with schema context and entity information.
         
@@ -28,7 +35,7 @@ class SQLAgent:
             intent: FORECAST or ANALYTICS
             entities: Optional dict with branch_codes, product_codes, regions (from EntityExtractor)
         """
-        schema_context = self.schema_agent.get_schema_context(question)
+        schema_context = schema_context or self.schema_agent.get_schema_context(question)
         
         # Build entity context for prompt
         entity_context = ""
@@ -52,9 +59,11 @@ class SQLAgent:
                     ', '.join([f"'{r}'" for r in regions])
                 )
 
+        plan_context = self._build_plan_context(analysis_plan)
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", self._get_system_prompt(intent)),
-            ("human", "Schema:\n{schema}\n\n{entity_info}Question: {question}\n\nSQL Query:")
+            ("human", "Schema:\n{schema}\n\n{entity_info}{plan_info}Question: {question}\n\nSQL Query:")
         ])
 
         chain = prompt | self.llm | StrOutputParser()
@@ -63,14 +72,23 @@ class SQLAgent:
             raw_sql = chain.invoke({
                 "schema": schema_context, 
                 "question": question,
-                "entity_info": entity_context
+                "entity_info": entity_context,
+                "plan_info": plan_context
             })
             sql = self._clean_sql(raw_sql)
             self._validate_sql(sql)
+            print("\n🧾 Generated SQL ({intent}):".format(intent=intent))
+            print(sql)
             return sql
         except Exception as e:
             print(f"⚠️ SQL generation failed: {e}")
-            return self._retry_generate_sql(question, schema_context, str(e), entities)
+            return self._retry_generate_sql(
+                question,
+                schema_context,
+                str(e),
+                entities,
+                analysis_plan
+            )
 
     def _get_system_prompt(self, intent: str) -> str:
         base = """You are a PostgreSQL expert. Generate ONLY a valid SELECT query.
@@ -100,16 +118,19 @@ CRITICAL - BRANCH FILTERING:
 - When user mentions branch CODE → use branch.branch_code = code
 - ALWAYS JOIN with branch table when filtering by branch!
 - PRIORITY: branch_code IN (...) > branch_name LIKE '%...%'
+
+
 """
 
         if intent == "FORECAST":
             base += """
 FOR FORECAST QUERIES:
 - Include historical data (at least last 90 days)
+- ALWAYS include product.product_code and product.product_name in SELECT when possible.
 - Group by date to get time series
-- For general forecasts: GROUP BY date only
-- For branch-specific: JOIN branch and GROUP BY date, branch_code
-- For product-specific: JOIN product and GROUP BY date, product_code
+- For general forecasts (toàn hệ thống): GROUP BY date
+- For branch-specific forecasts: JOIN branch AND product, GROUP BY date, product.product_code, product.product_name, branch.branch_code
+- For product-specific: JOIN product and GROUP BY date, product.product_code, product.product_name
 - Order by date ASC
 
 IMPORTANT: User says "Đà Nẵng" but branch_name is "Chi nhánh Đà Nẵng UN"
@@ -139,6 +160,7 @@ CRITICAL - REGION FILTERING:
 CRITICAL - REVENUE/DOANH THU:
 - Doanh thu = sales.quantity * (price if available, or use quantity as proxy)
 - If no price column, use SUM(sales.quantity) as total_sales or total_revenue
+- CURRENT SCHEMA DOES NOT PROVIDE price COLUMN → NEVER reference price in queries!
 - For revenue by branch: GROUP BY branch.branch_name, SUM(sales.quantity)"""
 
         return base
@@ -167,7 +189,14 @@ CRITICAL - REVENUE/DOANH THU:
         if not re.match(r'^\s*(SELECT|WITH)\b', sql_upper):
             raise ValueError("Query must start with SELECT or WITH")
 
-    def _retry_generate_sql(self, question: str, schema: str, error: str, entities: Optional[Dict] = None) -> str:
+    def _retry_generate_sql(
+        self,
+        question: str,
+        schema: str,
+        error: str,
+        entities: Optional[Dict] = None,
+        analysis_plan: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Retry SQL generation with error context."""
         entity_context = ""
         if entities:
@@ -176,10 +205,11 @@ CRITICAL - REVENUE/DOANH THU:
                 entity_context += "→ USE branch.branch_code IN ({}) instead of LIKE!\n".format(
                     ', '.join(map(str, entities['branch_codes']))
                 )
+        plan_context = self._build_plan_context(analysis_plan)
         
         retry_prompt = ChatPromptTemplate.from_messages([
             ("system", "You are a PostgreSQL expert. Fix the SQL query based on the error."),
-            ("human", "Schema: {schema}\n\n{entity_info}Question: {question}\n\nPrevious error: {error}\n\nGenerate a valid SELECT query:")
+            ("human", "Schema: {schema}\n\n{entity_info}{plan_info}Question: {question}\n\nPrevious error: {error}\n\nGenerate a valid SELECT query:")
         ])
 
         chain = retry_prompt | self.llm | StrOutputParser()
@@ -187,12 +217,38 @@ CRITICAL - REVENUE/DOANH THU:
             "schema": schema, 
             "question": question, 
             "error": error,
-            "entity_info": entity_context
+            "entity_info": entity_context,
+            "plan_info": plan_context
         })
 
         sql = self._clean_sql(raw_sql)
         self._validate_sql(sql)
+        print("\n🧾 Generated SQL (retry):")
+        print(sql)
         return sql
+
+    @staticmethod
+    def _build_plan_context(analysis_plan: Optional[Dict[str, Any]]) -> str:
+        if not analysis_plan:
+            return ""
+        summary_lines = []
+        if analysis_plan.get("objective"):
+            summary_lines.append(f"OBJECTIVE: {analysis_plan['objective']}")
+        if analysis_plan.get("metrics"):
+            summary_lines.append(f"TARGET METRICS: {', '.join(analysis_plan['metrics'])}")
+        if analysis_plan.get("dimensions"):
+            summary_lines.append(f"GROUP BY: {', '.join(analysis_plan['dimensions'])}")
+        if analysis_plan.get("timeframe"):
+            summary_lines.append(f"TIMEFRAME: {analysis_plan['timeframe']}")
+        if analysis_plan.get("filters"):
+            summary_lines.append(f"EXTRA FILTERS: {', '.join(analysis_plan['filters'])}")
+        if analysis_plan.get("chart_type"):
+            summary_lines.append(f"DESIRED CHART: {analysis_plan['chart_type']}")
+
+        if not summary_lines:
+            return ""
+
+        return "\nANALYSIS PLAN:\n- " + "\n- ".join(summary_lines) + "\n\n"
 
 
 

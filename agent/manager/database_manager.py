@@ -66,6 +66,11 @@ class DatabaseManager:
         """
         try:
             query = self._replace_current_date(query)
+            preview = query if len(query) <= 800 else query[:800] + "... [truncated]"
+            print("\n📝 Executing SQL:")
+            print(preview)
+            if params:
+                print(f"   ↪ Params: {params}")
 
             with self.engine.connect() as conn:
                 if params:

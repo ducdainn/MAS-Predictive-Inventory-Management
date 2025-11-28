@@ -69,9 +69,9 @@ def main():
     print("\n💡 The app will open in your default browser at: http://localhost:8501")
     print("💡 Press Ctrl+C to stop the server\n")
     
-    # Launch streamlit
+    # Launch streamlit using Python module (works better on Windows)
     subprocess.call([
-        "streamlit", "run", str(app_path),
+        sys.executable, "-m", "streamlit", "run", str(app_path),
         "--server.port=8501",
         "--server.address=localhost"
     ])

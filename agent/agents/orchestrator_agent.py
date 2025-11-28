@@ -10,6 +10,7 @@ import pandas as pd
 from agent.utils.dataframe_utils import format_dataframe_columns
 
 from agent.agents.analytics_agent import AnalyticsAgent
+from agent.agents.data_analysis_agent import DataAnalysisAgent
 from agent.agents.entity_extractor import EntityExtractor
 from agent.agents.forecast_agent import ForecastAgent
 from agent.agents.intent_agent import IntentAgent
@@ -38,6 +39,7 @@ class OrchestratorAgent:
         # Initialize all agents
         self.schema_agent = SchemaAgent(db_manager, memory)
         self.entity_extractor = EntityExtractor(llm_provider, db_manager)  # NEW: Entity extraction
+        self.data_analysis_agent = DataAnalysisAgent(llm_provider)
         self.intent_agent = IntentAgent(llm_provider)
         self.sql_agent = SQLAgent(llm_provider, self.schema_agent)
         self.analytics_agent = AnalyticsAgent(db_manager)
@@ -76,9 +78,25 @@ class OrchestratorAgent:
                 result = self.inventory_agent.optimize_inventory(question, entities=entities)
                 sql = "N/A - Inventory optimization uses multiple queries internally"
             else:
+                schema_context = self.schema_agent.get_schema_context(question)
+                analysis_plan = None
+                if intent == "ANALYTICS":
+                    print("📌 Step 3: Data analysis scoping (new)")
+                analysis_plan = self.data_analysis_agent.analyze(
+                        question,
+                        entities,
+                        schema_context=schema_context
+                    )
+                
                 # Step 3: Generate SQL for FORECAST and ANALYTICS (with entities)
                 print("📌 Step 3: SQL Generation")
-                sql = self.sql_agent.generate_sql(question, intent, entities=entities)
+                sql = self.sql_agent.generate_sql(
+                    question,
+                    intent,
+                    entities=entities,
+                    analysis_plan=analysis_plan,
+                    schema_context=schema_context
+                )
                 print(f"   → SQL: {sql[:200]}...\n")
                 
                 # Step 3: Route to appropriate agent
@@ -87,7 +105,7 @@ class OrchestratorAgent:
                 if intent == "FORECAST":
                     result = self.forecast_agent.forecast(sql, question)
                 else:
-                    result = self.analytics_agent.analyze(sql, question)
+                    result = self.analytics_agent.analyze(sql, question, analysis_plan=analysis_plan)
             
             # Step 4: Store in memory with success status
             success = result.get('success', True)

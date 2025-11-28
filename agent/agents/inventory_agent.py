@@ -19,6 +19,7 @@ from agent.agents.smart_insights_agent import SmartInsightsGenerator
 from agent.manager.database_manager import DatabaseManager
 from agent.utils.dataframe_utils import format_dataframe_columns
 from agent.core.llm_provider import LLMProvider
+from agent.utils.data_availability_checker import DataAvailabilityChecker
 
 
 try:
@@ -47,8 +48,12 @@ class InventoryOptimizationAgent:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         
-        # NEW: Smart insights generator for intelligent recommendations
+        # NEW: Smart insights generator + monitoring utilities
         self.insights_generator = SmartInsightsGenerator(llm_provider)
+        self.data_checker = DataAvailabilityChecker()
+        self._latest_data_quality_report: Dict[str, Any] = {}
+        self._latest_drift_report: Dict[str, Any] = {}
+        self._model_info: Dict[str, Any] = {}
         
         # Configuration parameters
         self.service_level = 0.95  # 95% service level
@@ -128,6 +133,8 @@ class InventoryOptimizationAgent:
                     "message": "Could not generate forecasts for demand prediction"
                 }
             
+            self._latest_drift_report = self._analyze_forecast_drift(per_item_forecasts)
+            
             # Step 3: Calculate inventory metrics with per-item forecasts
             print("📌 Step 3: Calculating inventory metrics...")
             recommendations = self._generate_recommendations(
@@ -177,7 +184,10 @@ class InventoryOptimizationAgent:
                 "action_plan": plan,
                 "chart": chart_path,
                 "summary": self._generate_summary(plan),
-                "smart_insights": insights  # NEW: AI-powered insights
+                "smart_insights": insights,  # NEW: AI-powered insights
+                "data_quality_report": self._latest_data_quality_report,
+                "drift_report": self._latest_drift_report,
+                "model_info": self._model_info
             }
             
         except Exception as e:
@@ -249,6 +259,38 @@ class InventoryOptimizationAgent:
         # Step 1: Get ALL historical data in one query
         print("   📦 Step 1: Fetching all historical data (single query)...")
         timeseries_cache = self._build_timeseries_cache(inventory_data)
+        self._latest_data_quality_report = self.data_checker.generate_report(
+            inventory_data,
+            timeseries_cache
+        )
+        self.data_checker.log_report(self._latest_data_quality_report)
+
+        routing_assignments = {
+            "xgboost": [],
+            "moving_avg": [],
+            "cold_start": []
+        }
+
+        for idx, row in inventory_data.iterrows():
+            key = (row['product_code'], row['branch_code'])
+            cache_df = timeseries_cache.get(key)
+            history_span_days = 0
+            if cache_df is not None and not cache_df.empty:
+                date_series = pd.to_datetime(cache_df['date'])
+                history_span_days = int((date_series.max() - date_series.min()).days)
+            if history_span_days >= 60:
+                routing_assignments["xgboost"].append(idx)
+            elif history_span_days >= 14:
+                routing_assignments["moving_avg"].append((key, cache_df, row))
+            else:
+                routing_assignments["cold_start"].append((key, cache_df, row))
+
+        print("   🔀 Smart routing summary:")
+        print(f"      • XGBoost (≥60 ngày): {len(routing_assignments['xgboost'])} items")
+        print(f"      • Moving Average (14-59 ngày): {len(routing_assignments['moving_avg'])} items")
+        print(f"      • Cold Start (<14 ngày hoặc không có lịch sử): {len(routing_assignments['cold_start'])} items")
+
+        xgboost_inventory = inventory_data.loc[routing_assignments["xgboost"]]
         
         # Step 2: Prepare data for vectorized processing
         print("   🔧 Step 2: Preparing data for vectorized feature engineering...")
@@ -260,18 +302,23 @@ class InventoryOptimizationAgent:
             if not model_loader.loaded:
                 print("   ⚠️  Pre-trained model not available, falling back to per-item forecasting")
                 return self._generate_forecasts_fallback(inventory_data, horizon_days, timeseries_cache)
+            self._model_info = model_loader.get_model_info()
+            print(f"   🧠 Using model version: {model_loader.get_version_string()}")
         except Exception as e:
             print(f"   ⚠️  Could not load model: {e}, falling back to per-item forecasting")
             return self._generate_forecasts_fallback(inventory_data, horizon_days, timeseries_cache)
         
         forecasts = {}
         processed = 0
-        total_items = len(inventory_data)
+        total_items = len(xgboost_inventory)
         
         # Step 3: Process each item with vectorized feature engineering
         print("   🚀 Step 3: Vectorized feature engineering and prediction...")
         
-        for idx, row in inventory_data.iterrows():
+        if xgboost_inventory.empty:
+            print("   ⚠️  No items eligible for XGBoost routing, skipping ML pipeline.")
+        
+        for idx, row in xgboost_inventory.iterrows():
             product_code = row['product_code']
             branch_code = row['branch_code']
             key = (product_code, branch_code)
@@ -283,6 +330,7 @@ class InventoryOptimizationAgent:
                 forecasts[key] = self._create_intelligent_fallback(
                     product_code, branch_code, horizon_days, row
                 )
+                forecasts[key]['routing_strategy'] = 'XGBOOST'
                 processed += 1
                 continue
             
@@ -291,6 +339,7 @@ class InventoryOptimizationAgent:
                 forecasts[key] = self._create_simple_forecast_from_data(
                     cache_df, avg_demand, horizon_days
                 )
+                forecasts[key]['routing_strategy'] = 'XGBOOST'
                 processed += 1
                 continue
             
@@ -360,6 +409,7 @@ class InventoryOptimizationAgent:
                     'historical_df': df_ts,
                     'metrics': adjusted_metrics
                 }
+                forecasts[key]['routing_strategy'] = 'XGBOOST'
                 
                 processed += 1
                 if processed % 100 == 0 or processed == total_items:
@@ -368,8 +418,24 @@ class InventoryOptimizationAgent:
             except Exception as e:
                 print(f"   ⚠️  Forecast failed for {product_code} at branch {branch_code}: {e}")
                 forecasts[key] = self._create_fallback_forecast(horizon_days)
+                forecasts[key]['routing_strategy'] = 'XGBOOST'
                 processed += 1
         
+        if routing_assignments["moving_avg"]:
+            print(f"   🔁 Using moving-average fallback for {len(routing_assignments['moving_avg'])} items (14-59 ngày).")
+            for key, cache_df, _ in routing_assignments["moving_avg"]:
+                avg_demand = cache_df['total_qty'].mean() if cache_df is not None and not cache_df.empty else 0.0
+                fallback = self._create_simple_forecast_from_data(cache_df, avg_demand, horizon_days)
+                fallback['routing_strategy'] = 'MOVING_AVG'
+                forecasts[key] = fallback
+
+        if routing_assignments["cold_start"]:
+            print(f"   🧊 Cold start fallback cho {len(routing_assignments['cold_start'])} items (<14 ngày lịch sử).")
+            for key, _, row in routing_assignments["cold_start"]:
+                fallback = self._create_new_item_forecast(horizon_days, row)
+                fallback['routing_strategy'] = 'REVIEW_NEW_ITEM'
+                forecasts[key] = fallback
+
         return forecasts
     
     def _generate_forecasts_fallback(self,
@@ -742,6 +808,44 @@ class InventoryOptimizationAgent:
         print(f"   ✅ Timeseries cache built with {len(cache)} product-branch combos (from {total_queries} query/queries)")
         return cache
     
+    def _analyze_forecast_drift(self,
+                                per_item_forecasts: Dict[tuple, Dict],
+                                drift_threshold: float = 0.4) -> Dict[str, Any]:
+        """Detect potential demand drift (forecast deviates strongly from recent history)."""
+        stats = {
+            "total_items": len(per_item_forecasts),
+            "high_drift_count": 0,
+            "drift_threshold": drift_threshold,
+            "high_drift_samples": []
+        }
+        if not per_item_forecasts:
+            return stats
+        
+        for key, forecast_data in per_item_forecasts.items():
+            metrics = forecast_data.get('metrics', {})
+            recent = metrics.get('recent_avg_daily')
+            forecast = metrics.get('forecast_avg_daily')
+            if recent is None or forecast is None:
+                continue
+            if recent <= 0:
+                continue
+            ratio = abs(forecast - recent) / max(recent, 0.1)
+            if ratio >= drift_threshold:
+                stats["high_drift_count"] += 1
+                stats["high_drift_samples"].append({
+                    "key": key,
+                    "recent_avg": recent,
+                    "forecast_avg": forecast,
+                    "ratio": round(ratio, 2)
+                })
+        
+        if stats["high_drift_count"]:
+            print(f"   ⚠️  Drift monitor: {stats['high_drift_count']} / {stats['total_items']} items exceed threshold {drift_threshold:.0%}")
+        else:
+            print("   ✅ Drift monitor: no items exceed threshold")
+        stats["high_drift_samples"] = stats["high_drift_samples"][:10]
+        return stats
+    
     def _get_forecast_base_date(self) -> date:
         """Return the configured system date (or real date) for fallback forecasts."""
         if SYSTEM_DATE_AVAILABLE:
@@ -832,6 +936,14 @@ class InventoryOptimizationAgent:
                 'history_points': int(len(hist_df))
             }
         }
+
+    def _create_new_item_forecast(self, horizon_days: int, inventory_row: pd.Series) -> Dict:
+        """Cold-start strategy: neutral forecast with review flag."""
+        forecast = self._create_fallback_forecast(horizon_days)
+        forecast['metrics']['reason'] = 'cold_start_new_item'
+        forecast['metrics']['current_stock'] = float(inventory_row.get('current_stock', 0))
+        forecast['routing_strategy'] = 'REVIEW_NEW_ITEM'
+        return forecast
     
     def _get_current_inventory(self, 
                                branch_codes: Optional[List[int]] = None,
@@ -869,20 +981,20 @@ class InventoryOptimizationAgent:
             sql += f" AND i.branch_code IN ({placeholders})"
             for i, code in enumerate(branch_codes):
                 params[f'branch_code_{i}'] = code
-        
+
         # Filter by specific products (if mentioned in question)
         if product_codes and len(product_codes) > 0:
             placeholders = ','.join([f':product_code_{i}' for i in range(len(product_codes))])
             sql += f" AND i.product_code IN ({placeholders})"
             for i, code in enumerate(product_codes):
                 params[f'product_code_{i}'] = code
-        
-        # Filter by regions (if mentioned in question)
-        if regions and len(regions) > 0:
+
+        # Filter by regions (only when user DIDN'T specify explicit branches)
+        if (not branch_codes) and regions and len(regions) > 0:
             placeholders = ','.join([f':region_{i}' for i in range(len(regions))])
             sql += f" AND b.region IN ({placeholders})"
             for i, region in enumerate(regions):
-                params[f'region_{i}'] = region
+                params[f'region_{i}'] = region.upper()
         
         sql += " ORDER BY i.branch_code, i.product_code"
         
@@ -931,7 +1043,7 @@ class InventoryOptimizationAgent:
             branch_in = ", ".join(str(code) for code in branch_codes)
             branch_filter = f"AND s.branch_code IN ({branch_in})"
         elif regions and len(regions) > 0:
-            region_in = ", ".join(f"'{r}'" for r in regions)
+            region_in = ", ".join(f"'{r.upper()}'" for r in regions)
             branch_filter = f"AND b.region IN ({region_in})"
         else:
             return pd.DataFrame()
@@ -1023,6 +1135,7 @@ class InventoryOptimizationAgent:
             
             forecast_df = forecast_data['forecast_df']
             historical_df = forecast_data['historical_df']
+            routing_strategy = forecast_data.get('routing_strategy', 'XGBOOST')
             
             # Calculate demand statistics from THIS item's historical data
             # Use iloc to handle formatted column names (value → Giá Trị)
@@ -1075,7 +1188,11 @@ class InventoryOptimizationAgent:
             expected_stock_after_period = current_stock - total_forecast_demand
             
             # Determine action needed
-            if current_stock < rop:
+            if routing_strategy == 'REVIEW_NEW_ITEM':
+                action = 'REVIEW_NEW_ITEM'
+                priority = 'MEDIUM'
+                quantity_needed = 0
+            elif current_stock < rop:
                 action = "URGENT_RESTOCK"
                 priority = "HIGH"
                 quantity_needed = eoq
@@ -1108,7 +1225,8 @@ class InventoryOptimizationAgent:
                 'action': action,
                 'priority': priority,
                 'quantity_needed': quantity_needed,
-                'unit': row['unit']
+                'unit': row['unit'],
+                'routing_strategy': routing_strategy
             })
         
         return pd.DataFrame(recommendations)

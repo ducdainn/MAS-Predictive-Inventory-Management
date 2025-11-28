@@ -3,8 +3,9 @@ EntityExtractor: identifies branches/products/regions mentioned in user queries.
 """
 
 import json
-import unicodedata
-from typing import Any, Dict, List
+import re
+from difflib import SequenceMatcher
+from typing import Any, Dict, List, Optional
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -19,32 +20,24 @@ class EntityExtractor:
     IMPROVEMENT: Enables context-aware optimization (e.g., "chi nhánh đà nẵng")
     """
 
-    def __init__(self, llm_provider: LLMProvider, db_manager: DatabaseManager):
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        db_manager: DatabaseManager,
+    ):
         self.llm = llm_provider.get_llm("openai", temperature=0.0)
         self.db = db_manager
+        self.branch_cache: List[Dict[str, Any]] = []
+        self.product_cache: List[Dict[str, Any]] = []
+        self.regions: List[str] = []
         self._load_entity_cache()
-
-    def _load_entity_cache(self):
-        """Load all branch and product names for fuzzy matching."""
-        try:
-            branches_df = self.db.execute_query("SELECT branch_code, branch_name, region FROM branch")
-            self.branches = branches_df.to_dict('records')
-
-            products_df = self.db.execute_query("SELECT product_code, product_name FROM product")
-            self.products = products_df.to_dict('records')
-
-            print(f"✅ Loaded {len(self.branches)} branches and {len(self.products)} products for entity matching")
-        except Exception as e:
-            print(f"⚠️ Could not load entity cache: {e}")
-            self.branches = []
-            self.products = []
 
     def extract_entities(self, question: str) -> Dict[str, Any]:
         """Extract entities from user question using LLM + fuzzy matching."""
         print("🔍 Extracting entities from question...")
 
-        branch_names = [b['branch_name'] for b in self.branches[:20]]
-        regions = list(set([b['region'] for b in self.branches]))
+        branch_names = self._get_branch_samples()
+        regions = self.regions
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", self._get_extraction_prompt()),
@@ -79,6 +72,22 @@ Extract entities as JSON:
 
             print(f"✅ Extracted: {len(entities.get('branch_codes', []))} branches, "
                   f"{len(entities.get('product_codes', []))} products")
+
+            # SAFETY NET: nếu không tìm được chi nhánh nhưng câu hỏi nhắc tới "chi nhánh"
+            # chạy toàn hệ thống hoặc suy luận theo region.
+            if not entities.get('branch_codes'):
+                q_lower = question.lower()
+                if ('chi nhánh' in q_lower or 'chi nhanh' in q_lower):
+                    print("⚠️ No branch_codes from LLM, using vector search for branches...")
+                    search_terms = self._extract_branch_keywords(question) or [question]
+                    for term in search_terms:
+                        db_candidates = self._search_branch_cache(term)
+                        if db_candidates:
+                            entities['branch_codes'] = [c['branch_code'] for c in db_candidates]
+                            entities['branch_names'] = [c['branch_name'] for c in db_candidates]
+                            entities['regions'] = entities.get('regions', [])
+                            break
+
             return entities
 
         except Exception as e:
@@ -108,21 +117,17 @@ Return ONLY valid JSON, no explanations."""
             return []
 
         matched_codes = []
-
         for mentioned in mentioned_names:
-            mentioned_lower = mentioned.lower().strip()
-            mentioned_normalized = self._normalize_vietnamese(mentioned_lower)
+            query = mentioned.strip()
+            if not query:
+                continue
+            results = self._fuzzy_search_branches(query)
+            for result in results:
+                matched_codes.append(result['branch_code'])
+                print(f"   ✓ Matched '{mentioned}' → {result['branch_name']} (code: {result['branch_code']}, score={result['score']:.2f})")
 
-            for branch in self.branches:
-                branch_name_lower = branch['branch_name'].lower()
-                branch_name_normalized = self._normalize_vietnamese(branch_name_lower)
-
-                if (mentioned_normalized in branch_name_normalized or
-                        mentioned_lower in branch_name_lower):
-                    matched_codes.append(branch['branch_code'])
-                    print(f"   ✓ Matched '{mentioned}' → {branch['branch_name']} (code: {branch['branch_code']})")
-
-        return list(set(matched_codes))
+        # Preserve order while removing duplicates
+        return list(dict.fromkeys(matched_codes))
 
     def _match_products(self, mentioned_names: List[str]) -> List[str]:
         """Fuzzy match mentioned product names to product codes."""
@@ -130,32 +135,21 @@ Return ONLY valid JSON, no explanations."""
             return []
 
         matched_codes = []
-
         for mentioned in mentioned_names:
-            mentioned_lower = mentioned.lower().strip()
-            mentioned_normalized = self._normalize_vietnamese(mentioned_lower)
+            query = mentioned.strip()
+            if not query:
+                continue
+            results = self._fuzzy_search_products(query)
+            if results:
+                best = results[0]
+                matched_codes.append(best['product_code'])
+                print(f"   ✓ Matched '{mentioned}' → {best['product_name'][:50]} (code: {best['product_code']}, score={best['score']:.2f})")
 
-            for product in self.products:
-                product_name_lower = product['product_name'].lower()
-                product_name_normalized = self._normalize_vietnamese(product_name_lower)
-
-                if (mentioned_normalized in product_name_normalized or
-                        mentioned_lower in product_name_lower):
-                    matched_codes.append(product['product_code'])
-                    print(f"   ✓ Matched '{mentioned}' → {product['product_name'][:50]}...")
-                    break
-
-        return matched_codes
-
-    def _normalize_vietnamese(self, text: str) -> str:
-        """Remove Vietnamese accents for better matching."""
-        normalized = unicodedata.normalize('NFD', text)
-        return ''.join(char for char in normalized if unicodedata.category(char) != 'Mn')
+        return list(dict.fromkeys(matched_codes))
 
     def _fallback_extraction(self, question: str) -> Dict[str, Any]:
         """Simple keyword-based fallback extraction."""
         question_lower = question.lower()
-        question_normalized = self._normalize_vietnamese(question_lower)
         
         entities = {
             'branch_names': [],
@@ -177,64 +171,95 @@ Return ONLY valid JSON, no explanations."""
             entities['regions'].append('MIỀN NAM')
             entities['scope'] = 'specific'
         
-        # Extract location keywords from question (2-3 word phrases)
-        # Skip common words like "chi", "nhánh", "của", "tồn", "kho"
-        skip_words = {'chi', 'nhánh', 'của', 'tồn', 'kho', 'tối', 'ưu', 'hóa', 'và', 'các', 'cho', 'với'}
-        question_words = [w for w in question_lower.split() if w not in skip_words and len(w) > 2]
-        
-        # Build location phrases (2-3 consecutive words)
-        location_phrases = []
-        for i in range(len(question_words) - 1):
-            # 2-word phrase
-            phrase_2 = f"{question_words[i]} {question_words[i+1]}"
-            location_phrases.append(phrase_2)
-            # 3-word phrase if available
-            if i + 2 < len(question_words):
-                phrase_3 = f"{question_words[i]} {question_words[i+1]} {question_words[i+2]}"
-                location_phrases.append(phrase_3)
-        
-        # Also add single important words (longer than 4 chars)
-        important_words = [w for w in question_words if len(w) > 4]
-        location_phrases.extend(important_words)
-        
-        # Normalize phrases for matching
-        location_phrases_normalized = [self._normalize_vietnamese(p) for p in location_phrases]
-        
-        # Match branches using location phrases
-        for branch in self.branches:
-            branch_name_lower = branch['branch_name'].lower()
-            branch_name_normalized = self._normalize_vietnamese(branch_name_lower)
-            
-            # Check if any location phrase appears in branch name
-            matched = False
-            for phrase, phrase_norm in zip(location_phrases, location_phrases_normalized):
-                if (phrase in branch_name_lower or 
-                    phrase_norm in branch_name_normalized):
-                    entities['branch_codes'].append(branch['branch_code'])
-                    entities['branch_names'].append(branch['branch_name'])
-                    entities['scope'] = 'specific'
-                    print(f"   ✓ Fallback matched: {branch['branch_name']} (phrase: '{phrase}')")
-                    matched = True
-                    break
-            
-            # If no phrase match, try matching important single words (only if they're long enough)
-            if not matched and important_words:
-                for word in important_words:
-                    word_norm = self._normalize_vietnamese(word)
-                    # Only match if word appears as a significant part of branch name
-                    if (word in branch_name_lower or word_norm in branch_name_normalized):
-                        # Additional check: word should not be too generic
-                        if len(word) > 4:  # Only longer words to avoid false matches
-                            entities['branch_codes'].append(branch['branch_code'])
-                            entities['branch_names'].append(branch['branch_name'])
-                            entities['scope'] = 'specific'
-                            print(f"   ✓ Fallback matched: {branch['branch_name']} (word: '{word}')")
-                            break
+        # Use cache search as emergency fallback
+        branch_candidates = self._search_branch_cache(question)
+        if branch_candidates:
+            entities['branch_codes'] = [c['branch_code'] for c in branch_candidates]
+            entities['branch_names'] = [c['branch_name'] for c in branch_candidates]
+            entities['scope'] = 'specific'
+
+        product_candidates = self._fuzzy_search_products(question, top_k=5, min_ratio=0.5)
+        if product_candidates:
+            entities['product_codes'] = [c['product_code'] for c in product_candidates]
+            entities['product_names'] = [c['product_name'] for c in product_candidates]
         
         entities['branch_codes'] = list(set(entities['branch_codes']))
         entities['branch_names'] = list(set(entities['branch_names']))
         
         return entities
+
+    def _extract_branch_keywords(self, question: str) -> List[str]:
+        """
+        Heuristic: capture phrases after 'chi nhánh/chi nhanh' to query vector store.
+        Keeps diacritics by slicing the original string using lowercase indices.
+        """
+        lowered = question.lower()
+        keywords: List[str] = []
+        for marker in ('chi nhánh', 'chi nhanh'):
+            start = lowered.find(marker)
+            if start == -1:
+                continue
+            orig_start = start + len(marker)
+            snippet = question[orig_start:].strip()
+            if not snippet:
+                continue
+            # Stop at first punctuation or keyword that usually ends the phrase
+            snippet = re.split(r"[,.?;!]|(?:\b(tháng|quý|năm|của|ở|tại|trong)\b)", snippet, maxsplit=1, flags=re.IGNORECASE)[0]
+            words = snippet.strip().split()
+            if not words:
+                continue
+            # Use up to first 5 words to keep the branch label concise
+            candidate = " ".join(words[:5]).strip()
+            if candidate:
+                keywords.append(candidate)
+        return keywords
+
+    def _load_entity_cache(self):
+        """Load entire branch/product tables into memory for fast lookup."""
+        branch_df = self.db.execute_query("SELECT branch_code, branch_name, region FROM branch ORDER BY branch_name")
+        product_df = self.db.execute_query("SELECT product_code, product_name FROM product ORDER BY product_name")
+
+        self.branch_cache = branch_df.to_dict("records")
+        self.product_cache = product_df.to_dict("records")
+        self.regions = sorted({row['region'] for row in self.branch_cache if row.get('region')})
+
+        print(f"🔁 Loaded {len(self.branch_cache)} branches & {len(self.product_cache)} products into cache")
+
+    def _get_branch_samples(self, limit: int = 10) -> List[str]:
+        return [row['branch_name'] for row in self.branch_cache[:limit]]
+
+    def _fuzzy_search_branches(self, query: str, min_ratio: float = 0.45, top_k: int = 5) -> List[Dict[str, Any]]:
+        return self._fuzzy_search(query, self.branch_cache, key='branch_name', value_keys=['branch_code', 'branch_name', 'region'], min_ratio=min_ratio, top_k=top_k)
+
+    def _fuzzy_search_products(self, query: str, min_ratio: float = 0.45, top_k: int = 5) -> List[Dict[str, Any]]:
+        return self._fuzzy_search(query, self.product_cache, key='product_name', value_keys=['product_code', 'product_name'], min_ratio=min_ratio, top_k=top_k)
+
+    def _fuzzy_search(self, query: str, dataset: List[Dict[str, Any]], key: str, value_keys: List[str], min_ratio: float, top_k: int) -> List[Dict[str, Any]]:
+        query_norm = query.strip().lower()
+        if not query_norm:
+            return []
+        scored = []
+        for row in dataset:
+            value = row.get(key)
+            if not value:
+                continue
+            ratio = SequenceMatcher(None, query_norm, value.lower()).ratio()
+            if ratio >= min_ratio:
+                result = {k: row.get(k) for k in value_keys}
+                result['score'] = ratio
+                scored.append(result)
+        scored.sort(key=lambda x: x['score'], reverse=True)
+        return scored[:top_k]
+
+    def _search_branch_cache(self, text: str) -> List[Dict[str, Any]]:
+        """Search branch cache using keyword containment (for fallback)."""
+        text_norm = text.lower().strip()
+        matches = []
+        for row in self.branch_cache:
+            name = row.get('branch_name', '').lower()
+            if text_norm in name:
+                matches.append({'branch_code': row['branch_code'], 'branch_name': row['branch_name'], 'region': row.get('region'), 'score': 1.0})
+        return matches[:5]
 
 
 

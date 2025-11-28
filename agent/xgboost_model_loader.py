@@ -28,6 +28,7 @@ class XGBoostModelLoader:
         self.feature_names = []
         self.metadata = {}
         self.loaded = False
+        self.model_version = "unknown"
     
     def load_latest_model(self) -> bool:
         """Load the most recent model version."""
@@ -48,6 +49,7 @@ class XGBoostModelLoader:
             
             latest_model = model_files[0]
             model_path = os.path.join(self.models_dir, latest_model)
+            self.model_version = latest_model.replace('.pkl', '')
             
             # Load model directly
             with open(model_path, 'rb') as f:
@@ -87,6 +89,8 @@ class XGBoostModelLoader:
             if 'metrics' in self.metadata:
                 test_r2 = self.metadata['metrics'].get('test_r2', 0)
                 print(f"   • Test R²: {test_r2:.4f}")
+            if 'trained_at' in self.metadata:
+                print(f"   • Trained at: {self.metadata['trained_at']}")
             
             return True
             
@@ -335,12 +339,17 @@ class XGBoostModelLoader:
         return {
             "loaded": True,
             "model_type": self.metadata.get('model_type', 'Unknown'),
-            "version": self.metadata.get('version', 'Unknown'),
+            "version": self.metadata.get('version', self.model_version),
             "trained_at": self.metadata.get('trained_at', 'Unknown'),
             "n_features": len(self.feature_names),
             "metrics": self.metadata.get('final_metrics', {}),
             "feature_names": self.feature_names[:10]  # Top 10 for display
         }
+
+    def get_version_string(self) -> str:
+        """Return a human-readable model version identifier."""
+        info = self.get_model_info()
+        return f"{info.get('version', 'unknown')} (trained_at={info.get('trained_at', 'N/A')})"
 
 
 # Singleton instance for production use

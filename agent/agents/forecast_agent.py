@@ -72,7 +72,12 @@ class ForecastAgent:
                  horizon: int = 30,
                  create_chart: bool = True,
                  preloaded_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
-        """Execute query and perform forecasting."""
+        """
+        Execute query and perform forecasting.
+
+        Nếu dữ liệu có cột product_code → dự báo theo từng SKU rồi cộng lại thành tổng
+        để vẽ biểu đồ; đồng thời trả thêm per_sku_forecasts cho phân tích chi tiết.
+        """
         print(f"🔮 Executing forecast query...")
 
         if preloaded_df is not None:
@@ -85,6 +90,11 @@ class ForecastAgent:
 
         print(f"✅ Retrieved {len(df)} historical data points")
 
+        # Case 1: Có dimension product_code → forecast per SKU, aggregate
+        if 'product_code' in df.columns:
+            return self._forecast_per_sku(df, horizon, create_chart)
+
+        # Case 2: Legacy – single aggregated series
         date_col, value_col = self._identify_columns(df)
 
         if not date_col or not value_col:
@@ -95,8 +105,7 @@ class ForecastAgent:
         if self.use_ml and self.ml_engine:
             forecast_result, model_info = self._ml_forecast(df_ts, horizon)
         else:
-            forecast_result = self._simple_forecast(df_ts, horizon)
-            model_info = {"model": "moving_average", "confidence_intervals": False}
+            forecast_result, model_info = self._run_pretrained_or_simple(df_ts, horizon)
 
         chart_path = None
         if create_chart:
@@ -180,6 +189,110 @@ class ForecastAgent:
         }).set_index('date')
 
         return forecast_df
+
+    def _run_pretrained_or_simple(self, df_ts: pd.DataFrame, horizon: int) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """
+        Helper: chạy pre-trained XGBoost nếu có, nếu lỗi thì fallback simple forecast.
+        """
+        if self.pretrained_loader and self.pretrained_loader.loaded:
+            print("⚡ Using pre-trained XGBoost model (FAST inference)...")
+            try:
+                forecast_df = self.pretrained_loader.predict_with_confidence(
+                    df_ts,
+                    horizon=horizon,
+                    confidence_level=0.95
+                )
+                model_info = {
+                    "model": "xgboost_pretrained",
+                    "confidence_intervals": True,
+                    "confidence_level": 0.95,
+                    "has_bounds": True,
+                    "inference_time": "~50ms"
+                }
+                print(f"✅ Forecast generated using PRE-TRAINED XGBOOST (fast!)")
+                return forecast_df, model_info
+            except Exception as e:
+                print(f"⚠️  Pre-trained model failed on aggregated series: {e}")
+
+        # Fallback: simple
+        forecast_df = self._simple_forecast(df_ts, horizon)
+        model_info = {"model": "moving_average", "confidence_intervals": False}
+        return forecast_df, model_info
+
+    def _forecast_per_sku(self,
+                          df: pd.DataFrame,
+                          horizon: int) -> Dict[str, Any]:
+        """
+        Forecast per SKU (product_code) rồi cộng forecast thành tổng chuỗi thời gian.
+        """
+        print("🔬 Detected product_code column → running per-SKU forecasts")
+
+        date_col, value_col = self._identify_columns(df)
+        if not date_col or not value_col:
+            return {"success": False, "message": "Could not identify date and value columns for per-SKU forecast"}
+
+        per_sku_forecasts = {}
+        per_sku_histories = {}
+
+        agg_hist_ts = None
+        agg_forecast_ts = None
+
+        # Nhóm theo product_code (và giữ tên sản phẩm nếu có)
+        group_cols = ['product_code']
+        if 'product_name' in df.columns:
+            group_cols.append('product_name')
+
+        for key, group in df.groupby(group_cols):
+            if isinstance(key, tuple):
+                product_code = key[0]
+                product_name = key[1] if len(key) > 1 else ""
+            else:
+                product_code = key
+                product_name = ""
+
+            df_ts = self._prepare_time_series(group, date_col, value_col)
+
+            # Dùng pre-trained nếu có, nếu không thì simple
+            if self.use_ml and self.ml_engine:
+                # ML engine (auto) hiện vẫn trên 1 series; dùng cho trường hợp không có pre-trained
+                forecast_ts, model_info = self._ml_forecast(df_ts, horizon)
+            else:
+                forecast_ts, model_info = self._run_pretrained_or_simple(df_ts, horizon)
+
+            per_sku_histories[product_code] = df_ts
+            per_sku_forecasts[product_code] = {
+                "product_name": product_name,
+                "forecast": forecast_ts,
+                "model_info": model_info
+            }
+
+            # Cộng dồn vào chuỗi tổng
+            agg_hist_ts = df_ts[['value']].add(agg_hist_ts, fill_value=0) if agg_hist_ts is not None else df_ts[['value']].copy()
+            agg_forecast_ts = forecast_ts[['forecast']].add(agg_forecast_ts, fill_value=0) if agg_forecast_ts is not None else forecast_ts[['forecast']].copy()
+
+        # Tính metrics và chart trên chuỗi tổng
+        metrics = self._calculate_metrics(agg_hist_ts, agg_forecast_ts)
+        chart_path = self._plot_forecast(agg_hist_ts, agg_forecast_ts, value_col, {"model": "xgboost_per_sku"})
+
+        hist_display = format_dataframe_columns(agg_hist_ts.reset_index())
+        if len(hist_display.columns) > 0:
+            hist_display = hist_display.set_index(hist_display.columns[0])
+
+        forecast_display = format_dataframe_columns(agg_forecast_ts.reset_index())
+        if len(forecast_display.columns) > 0:
+            forecast_display = forecast_display.set_index(forecast_display.columns[0])
+
+        return {
+            "success": True,
+            "historical_data": hist_display,
+            "forecast": forecast_display,
+            "historical_data_raw": agg_hist_ts,
+            "forecast_raw": agg_forecast_ts,
+            "chart": chart_path,
+            "metrics": metrics,
+            "summary": self._generate_forecast_summary(agg_hist_ts, agg_forecast_ts),
+            "per_sku_forecasts": per_sku_forecasts
+        }
 
     def _ml_forecast(self, df_ts: pd.DataFrame, horizon: int) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """
