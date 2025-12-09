@@ -95,7 +95,7 @@ def render(orchestrator):
 
 
 def display_analytics_results(result):
-    """Display analytics results"""
+    """Display analytics results with interactive Plotly charts"""
     
     data = result['result']
     
@@ -127,22 +127,167 @@ def display_analytics_results(result):
             file_name="analytics_result.csv",
             mime="text/csv"
         )
-    
-    # Show chart
-    if data.get('charts') and len(data['charts']) > 0:
-        st.markdown("---")
-        st.subheader("📈 Visualization")
         
-        for chart_path in data['charts']:
-            try:
-                img = Image.open(chart_path)
-                st.image(img, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Could not load chart: {e}")
+        # Interactive Visualization
+        st.markdown("---")
+        st.subheader("📈 Interactive Visualization")
+        
+        _render_interactive_chart(df)
     
     # Show summary
     if data.get('summary'):
         st.markdown("---")
         st.subheader("📝 Summary")
         st.text(data['summary'])
+
+
+def _render_interactive_chart(df: pd.DataFrame):
+    """Render interactive Plotly chart based on data structure"""
+    import plotly.graph_objects as go
+    
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    date_cols = []
+    
+    # Detect date columns
+    for col in df.columns:
+        if 'date' in col.lower() or 'time' in col.lower():
+            try:
+                df[col] = pd.to_datetime(df[col])
+                date_cols.append(col)
+                if col in categorical_cols:
+                    categorical_cols.remove(col)
+            except:
+                pass
+    
+    if not numeric_cols:
+        st.info("No numeric columns to visualize")
+        return
+    
+    # Chart type selection
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        chart_type = st.selectbox(
+            "Chart Type",
+            ["Bar", "Line", "Area", "Pie", "Scatter", "Horizontal Bar"],
+            key="analytics_chart_type"
+        )
+    
+    with col2:
+        y_col = st.selectbox(
+            "Value (Y-axis)",
+            numeric_cols,
+            key="analytics_y_col"
+        )
+    
+    with col3:
+        x_options = categorical_cols + date_cols + ["Index"]
+        x_col = st.selectbox(
+            "Category (X-axis)",
+            x_options if x_options else ["Index"],
+            key="analytics_x_col"
+        )
+    
+    with col4:
+        sort_option = st.selectbox(
+            "Sort By",
+            ["Value (Desc)", "Value (Asc)", "Category (A-Z)", "Category (Z-A)", "None"],
+            index=0,  # Default: Value (Desc)
+            key="analytics_sort"
+        )
+    
+    # Prepare data
+    if x_col == "Index":
+        plot_df = df.reset_index()
+        x_col = "index"
+    else:
+        plot_df = df.copy()
+    
+    # Apply sorting
+    if sort_option == "Value (Desc)":
+        plot_df = plot_df.sort_values(y_col, ascending=False)
+    elif sort_option == "Value (Asc)":
+        plot_df = plot_df.sort_values(y_col, ascending=True)
+    elif sort_option == "Category (A-Z)":
+        plot_df = plot_df.sort_values(x_col, ascending=True)
+    elif sort_option == "Category (Z-A)":
+        plot_df = plot_df.sort_values(x_col, ascending=False)
+    
+    # Limit data for better visualization
+    if len(plot_df) > 50 and chart_type in ["Bar", "Horizontal Bar", "Pie"]:
+        plot_df = plot_df.head(20)
+        st.caption("📌 Showing top 20 items")
+    
+    # Create chart
+    try:
+        if chart_type == "Bar":
+            fig = px.bar(
+                plot_df, x=x_col, y=y_col,
+                color=y_col,
+                color_continuous_scale="Blues",
+                title=f"{y_col} by {x_col}"
+            )
+            fig.update_layout(showlegend=False)
+            
+        elif chart_type == "Horizontal Bar":
+            fig = px.bar(
+                plot_df, x=y_col, y=x_col,
+                orientation='h',
+                color=y_col,
+                color_continuous_scale="Blues",
+                title=f"{y_col} by {x_col}"
+            )
+            # Preserve sort order from dataframe
+            fig.update_layout(showlegend=False, yaxis={'categoryorder': 'trace'})
+            
+        elif chart_type == "Line":
+            fig = px.line(
+                plot_df, x=x_col, y=y_col,
+                markers=True,
+                title=f"{y_col} over {x_col}"
+            )
+            
+        elif chart_type == "Area":
+            fig = px.area(
+                plot_df, x=x_col, y=y_col,
+                title=f"{y_col} over {x_col}"
+            )
+            
+        elif chart_type == "Pie":
+            fig = px.pie(
+                plot_df, values=y_col, names=x_col,
+                title=f"Distribution of {y_col}",
+                hole=0.3
+            )
+            
+        elif chart_type == "Scatter":
+            if len(numeric_cols) >= 2:
+                x_num = st.selectbox("X Numeric", numeric_cols, key="scatter_x")
+                y_num = st.selectbox("Y Numeric", [c for c in numeric_cols if c != x_num], key="scatter_y")
+                fig = px.scatter(
+                    plot_df, x=x_num, y=y_num,
+                    color=categorical_cols[0] if categorical_cols else None,
+                    title=f"{y_num} vs {x_num}"
+                )
+            else:
+                fig = px.scatter(
+                    plot_df, x=x_col, y=y_col,
+                    title=f"{y_col} vs {x_col}"
+                )
+        
+        # Common layout updates
+        fig.update_layout(
+            template="plotly_white",
+            height=500,
+            margin=dict(l=20, r=20, t=50, b=20),
+            font=dict(family="Arial", size=12),
+            title_font_size=16,
+            title_x=0.5
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Could not create chart: {e}")
 

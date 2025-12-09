@@ -154,36 +154,50 @@ class LongTermMemory:
     def __init__(self, 
                  qdrant_url: Optional[str] = None,
                  qdrant_api_key: Optional[str] = None,
-                 use_redis: bool = False):
+                 use_redis: bool = False,
+                 local_path: Optional[str] = None):
         """
         Initialize Qdrant client.
         
         Args:
-            qdrant_url: Qdrant server URL (default: cloud instance)
-            qdrant_api_key: Qdrant API key (default: from user config)
+            qdrant_url: Qdrant server URL (for cloud instance)
+            qdrant_api_key: Qdrant API key (for cloud instance)
             use_redis: Whether to use Redis cache
+            local_path: Path for local Qdrant storage (if using local mode)
         """
         if not QDRANT_AVAILABLE:
             raise ImportError("Qdrant required. Install: pip install qdrant-client")
         
         # Load Qdrant configuration from environment variables
-        if qdrant_url is None:
-            qdrant_url = os.getenv("QDRANT_URL")
+        qdrant_mode = os.getenv("QDRANT_MODE", "cloud")
         
-        if qdrant_api_key is None:
-            qdrant_api_key = os.getenv("QDRANT_API_KEY")
-        
-        if not qdrant_url or not qdrant_api_key:
-            raise ValueError(
-                "QDRANT_URL and QDRANT_API_KEY must be set in environment variables or .env file. "
-                "Please configure these values in your .env file or environment."
+        if qdrant_mode == "local":
+            # LOCAL MODE: Use local file storage (no server needed)
+            if local_path is None:
+                local_path = os.getenv("QDRANT_LOCAL_PATH", "./memory/qdrant_data")
+            
+            os.makedirs(local_path, exist_ok=True)
+            self.client = QdrantClient(path=local_path)
+            print(f"✅ Qdrant initialized in LOCAL mode: {local_path}")
+        else:
+            # CLOUD MODE: Connect to Qdrant Cloud
+            if qdrant_url is None:
+                qdrant_url = os.getenv("QDRANT_URL")
+            
+            if qdrant_api_key is None:
+                qdrant_api_key = os.getenv("QDRANT_API_KEY")
+            
+            if not qdrant_url or not qdrant_api_key:
+                raise ValueError(
+                    "QDRANT_URL and QDRANT_API_KEY must be set for cloud mode. "
+                    "Or set QDRANT_MODE=local for local storage."
+                )
+            
+            self.client = QdrantClient(
+                url=qdrant_url,
+                api_key=qdrant_api_key
             )
-        
-        # Initialize Qdrant client
-        self.client = QdrantClient(
-            url=qdrant_url,
-            api_key=qdrant_api_key
-        )
+            print(f"✅ Qdrant initialized in CLOUD mode: {qdrant_url}")
         
         # Embedding model (multilingual for Vietnamese)
         # Model dimension: 384 for paraphrase-multilingual-MiniLM-L12-v2
