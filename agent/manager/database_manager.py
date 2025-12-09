@@ -14,6 +14,12 @@ try:
 except ImportError:
     SYSTEM_DATE_AVAILABLE = False
 
+try:
+    from agent.utils.sql_query_logger import get_sql_logger
+    SQL_LOGGER_AVAILABLE = True
+except ImportError:
+    SQL_LOGGER_AVAILABLE = False
+
 
 class DatabaseManager:
     """
@@ -24,7 +30,7 @@ class DatabaseManager:
     - Uses SQLAlchemy text() with bound parameters
     """
 
-    def __init__(self):
+    def __init__(self, log_dir: str = "sql_logs"):
         self.PG_USER = os.getenv("PG_USER", "postgres")
         self.PG_PASSWORD = os.getenv("PG_PASSWORD", "postgres")
         self.PG_HOST = os.getenv("PG_HOST", "localhost")
@@ -37,6 +43,12 @@ class DatabaseManager:
         )
         self.engine = create_engine(uri, pool_pre_ping=True, pool_size=5)
         print(f"✅ Connected to database: {self.PG_DB}")
+        
+        # Initialize SQL logger
+        if SQL_LOGGER_AVAILABLE:
+            self.sql_logger = get_sql_logger(log_dir)
+        else:
+            self.sql_logger = None
 
     def _replace_current_date(self, query: str) -> str:
         """
@@ -50,13 +62,14 @@ class DatabaseManager:
             query = query.replace("CURRENT_DATE", f"DATE '{system_date}'")
         return query
 
-    def execute_query(self, query: str, params: Optional[Dict] = None) -> pd.DataFrame:
+    def execute_query(self, query: str, params: Optional[Dict] = None, source: str = "DatabaseManager") -> pd.DataFrame:
         """
         Execute SQL and return DataFrame with PARAMETERIZED QUERIES.
 
         Args:
             query: SQL query with :param_name placeholders
             params: Dict of parameters {param_name: value}
+            source: Source of the query (for logging)
 
         Example:
             db.execute_query(
@@ -66,11 +79,14 @@ class DatabaseManager:
         """
         try:
             query = self._replace_current_date(query)
-            preview = query if len(query) <= 800 else query[:800] + "... [truncated]"
-            print("\n📝 Executing SQL:")
-            print(preview)
-            if params:
-                print(f"   ↪ Params: {params}")
+
+            # Chỉ log ra file, không in SQL ra terminal nữa
+            if self.sql_logger:
+                self.sql_logger.log_executed_query(
+                    query=query,
+                    source=source,
+                    params=params
+                )
 
             with self.engine.connect() as conn:
                 if params:
@@ -79,10 +95,15 @@ class DatabaseManager:
                     result = pd.read_sql(text(query), conn)
             return result
         except Exception as e:
-            print(f"❌ Query error: {e}")
-            print(f"Query: {query[:200]}...")
-            if params:
-                print(f"Params: {params}")
+            # Log error query to file (không in ra terminal)
+            if self.sql_logger:
+                self.sql_logger.log_query(
+                    query=query,
+                    query_type="ERROR",
+                    source=source,
+                    params=params,
+                    context={"error": str(e)}
+                )
             raise
 
 

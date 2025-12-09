@@ -16,7 +16,11 @@ def render(orchestrator):
         orchestrator: OrchestratorAgent instance
     """
     st.title("📊 Dashboard Overview")
-    st.markdown("Real-time inventory and sales insights")
+    st.markdown("""
+    <div style='color: #718096; font-size: 1.05rem; margin-bottom: 2rem; font-weight: 500;'>
+        Real-time inventory and sales insights
+    </div>
+    """, unsafe_allow_html=True)
     
     # Get database stats
     try:
@@ -29,31 +33,40 @@ def render(orchestrator):
             # Total branches
             branches_df = db.execute_query("SELECT COUNT(DISTINCT branch_code) as count FROM branch")
             total_branches = int(branches_df['count'].iloc[0])
-            st.metric(
-                label="🏢 Total Branches",
-                value=total_branches,
-                help="Number of warehouse branches"
-            )
+            st.markdown(f"""
+            <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        padding: 1.5rem; border-radius: 16px; color: white; text-align: center;
+                        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);'>
+                <div style='font-size: 2.5rem; font-weight: 800; margin-bottom: 0.5rem;'>{total_branches}</div>
+                <div style='font-size: 0.95rem; font-weight: 600; opacity: 0.9;'>🏢 Total Branches</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col2:
             # Total products
             products_df = db.execute_query("SELECT COUNT(DISTINCT product_code) as count FROM product")
             total_products = int(products_df['count'].iloc[0])
-            st.metric(
-                label="📦 Total Products",
-                value=f"{total_products:,}",
-                help="Number of unique products"
-            )
+            st.markdown(f"""
+            <div style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                        padding: 1.5rem; border-radius: 16px; color: white; text-align: center;
+                        box-shadow: 0 8px 25px rgba(240, 147, 251, 0.3);'>
+                <div style='font-size: 2.5rem; font-weight: 800; margin-bottom: 0.5rem;'>{total_products:,}</div>
+                <div style='font-size: 0.95rem; font-weight: 600; opacity: 0.9;'>📦 Total Products</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col3:
             # Total inventory
             inventory_df = db.execute_query("SELECT SUM(quantity) as total FROM inventory")
             total_inventory = int(inventory_df['total'].iloc[0])
-            st.metric(
-                label="📊 Total Stock",
-                value=f"{total_inventory:,}",
-                help="Total inventory quantity"
-            )
+            st.markdown(f"""
+            <div style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+                        padding: 1.5rem; border-radius: 16px; color: white; text-align: center;
+                        box-shadow: 0 8px 25px rgba(79, 172, 254, 0.3);'>
+                <div style='font-size: 2.5rem; font-weight: 800; margin-bottom: 0.5rem;'>{total_inventory:,}</div>
+                <div style='font-size: 0.95rem; font-weight: 600; opacity: 0.9;'>📊 Total Stock</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col4:
             # Sales today
@@ -63,11 +76,14 @@ def render(orchestrator):
                 WHERE date = CURRENT_DATE
             """)
             sales_today = int(sales_df['total'].iloc[0]) if not sales_df.empty else 0
-            st.metric(
-                label="💰 Sales Today",
-                value=f"{sales_today:,}",
-                help="Total sales quantity today"
-            )
+            st.markdown(f"""
+            <div style='background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+                        padding: 1.5rem; border-radius: 16px; color: white; text-align: center;
+                        box-shadow: 0 8px 25px rgba(67, 233, 123, 0.3);'>
+                <div style='font-size: 2.5rem; font-weight: 800; margin-bottom: 0.5rem;'>{sales_today:,}</div>
+                <div style='font-size: 0.95rem; font-weight: 600; opacity: 0.9;'>💰 Sales Today</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         st.markdown("---")
         
@@ -75,7 +91,13 @@ def render(orchestrator):
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📈 Sales Trend (Last 30 Days)")
+            st.markdown("""
+            <div style='margin-bottom: 1rem;'>
+                <h3 style='color: #2d3748; font-size: 1.3rem; font-weight: 700; margin-bottom: 1rem;'>
+                    📈 Sales Trend (Last 30 Days)
+                </h3>
+            </div>
+            """, unsafe_allow_html=True)
             
             sales_trend_df = db.execute_query("""
                 SELECT date, SUM(quantity) as total_sales
@@ -90,21 +112,37 @@ def render(orchestrator):
                     sales_trend_df,
                     x='date',
                     y='total_sales',
-                    title='Daily Sales Volume',
+                    title='',
                     labels={'total_sales': 'Quantity', 'date': 'Date'}
                 )
-                fig.update_traces(line_color='#1f77b4', line_width=3)
+                fig.update_traces(
+                    line_color='#667eea', 
+                    line_width=3,
+                    fill='tonexty',
+                    fillcolor='rgba(102, 126, 234, 0.1)'
+                )
                 fig.update_layout(
                     height=350,
                     showlegend=False,
-                    hovermode='x unified'
+                    hovermode='x unified',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='#2d3748'),
+                    xaxis=dict(gridcolor='rgba(0,0,0,0.05)'),
+                    yaxis=dict(gridcolor='rgba(0,0,0,0.05)')
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No sales data available for the last 30 days")
         
         with col2:
-            st.subheader("🏆 Top 10 Products (This Month)")
+            st.markdown("""
+            <div style='margin-bottom: 1rem;'>
+                <h3 style='color: #2d3748; font-size: 1.3rem; font-weight: 700; margin-bottom: 1rem;'>
+                    🏆 Top 10 Products (This Month)
+                </h3>
+            </div>
+            """, unsafe_allow_html=True)
             
             top_products_df = db.execute_query("""
                 SELECT 
@@ -124,14 +162,25 @@ def render(orchestrator):
                     x='total_sold',
                     y='product_name',
                     orientation='h',
-                    title='Best Selling Products',
+                    title='',
                     labels={'total_sold': 'Quantity Sold', 'product_name': ''}
                 )
-                fig.update_traces(marker_color='#2ecc71')
+                fig.update_traces(
+                    marker_color='#48bb78',
+                    marker_line_color='#38a169',
+                    marker_line_width=1.5
+                )
                 fig.update_layout(
                     height=350,
                     showlegend=False,
-                    yaxis={'categoryorder':'total ascending'}
+                    yaxis=dict(
+                        categoryorder='total ascending',
+                        gridcolor='rgba(0,0,0,0.05)'
+                    ),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='#2d3748'),
+                    xaxis=dict(gridcolor='rgba(0,0,0,0.05)')
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:

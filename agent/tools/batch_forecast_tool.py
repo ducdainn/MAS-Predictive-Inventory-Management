@@ -183,17 +183,17 @@ class BatchForecastTool:
         Returns:
             Dict với forecast results hoặc None nếu thất bại
         """
-        # Build SQL query để lấy historical data (90 days for better features)
+        # Build SQL query để lấy historical data (365 days for better features)
         # Use system_date-aware date filter
         try:
             from agent.system_date import get_system_date, SYSTEM_DATE_AVAILABLE
             if SYSTEM_DATE_AVAILABLE:
                 system_date = get_system_date()
-                date_filter = f"date >= DATE '{system_date}' - INTERVAL '90 days' AND date <= DATE '{system_date}'"
+                date_filter = f"date >= DATE '{system_date}' - INTERVAL '365 days' AND date <= DATE '{system_date}'"
             else:
-                date_filter = "date >= CURRENT_DATE - INTERVAL '90 days' AND date <= CURRENT_DATE"
+                date_filter = "date >= CURRENT_DATE - INTERVAL '365 days' AND date <= CURRENT_DATE"
         except ImportError:
-            date_filter = "date >= CURRENT_DATE - INTERVAL '90 days' AND date <= CURRENT_DATE"
+            date_filter = "date >= CURRENT_DATE - INTERVAL '365 days' AND date <= CURRENT_DATE"
         
         if branch_code:
             # Specific product-branch combination

@@ -83,7 +83,7 @@ Choose the `chart_type` based on the intent:
 
 ### 3. OUTPUT FORMAT (JSON ONLY)
 Return a valid JSON object with these fields:
-{
+{{
     "objective": "Brief explanation of what we are analyzing",
     "metrics": ["List of SQL aggregation functions, e.g., SUM(quantity)"],
     "dimensions": ["List of grouping columns, e.g., product_name, date"],
@@ -92,7 +92,7 @@ Return a valid JSON object with these fields:
     "chart_type": "One of: line, bar, barh, pie, scatter, kpi_card",
     "chart_title": "A professional title for the chart (in Vietnamese)",
     "narrative_guidance": "Instructions for the SQL writer (e.g., 'Group by month', 'Limit to top 10')"
-}
+}}
 
 ### 4. LANGUAGE RULES
 - The `chart_title` and `objective` MUST be in VIETNAMESE.

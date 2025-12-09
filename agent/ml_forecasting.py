@@ -20,11 +20,14 @@ Features:
 """
 
 import warnings
+import os
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass
+
+from agent.utils.model_logger import get_model_logger
 
 warnings.filterwarnings('ignore')
 
@@ -131,14 +134,24 @@ class MLForecastingEngine:
         result = engine.forecast(df, horizon=30)
     """
     
-    def __init__(self, confidence_level: float = 0.95):
+    def __init__(self, confidence_level: float = 0.95, log_dir: str = "model_inputs", enable_export: bool = True):
         """
         Initialize forecasting engine.
         
         Args:
             confidence_level: Confidence level for intervals (default: 0.95)
+            log_dir: Directory to save input data logs (default: "model_inputs")
+            enable_export: Whether to export data files (default: True)
         """
         self.confidence_level = confidence_level
+        self.log_dir = log_dir
+        self.enable_export = enable_export  # Flag to control file export
+        if log_dir and enable_export:
+            os.makedirs(log_dir, exist_ok=True)
+
+        # Centralized model logger (writes to model_logs/model_debug.log)
+        # Dùng để log input, features, kết quả dự đoán thay vì print ra terminal.
+        self.model_logger = get_model_logger(log_dir="model_logs")
         self.models = {
             'xgboost': self._xgboost_forecast if XGBOOST_AVAILABLE else None,
             'prophet': self._prophet_forecast if PROPHET_AVAILABLE else None,
@@ -149,6 +162,20 @@ class MLForecastingEngine:
         
         # Remove unavailable models
         self.models = {k: v for k, v in self.models.items() if v is not None}
+    
+    def _export_data(self, df: pd.DataFrame, filename: str, description: str = ""):
+        """Export DataFrame to CSV file with logging (file only, no console print)."""
+        if not self.enable_export or not self.log_dir:
+            return  # Skip export if disabled
+        try:
+            filepath = os.path.join(self.log_dir, filename)
+            df.to_csv(filepath, index=True)
+            # Ghi log mức info thay vì print ra terminal
+            self.model_logger.info(
+                f"EXPORT_CSV | {description} | path={filepath} | shape={df.shape} | cols={list(df.columns)[:10]}"
+            )
+        except Exception as e:
+            self.model_logger.error(f"FAILED_EXPORT_CSV | {description} | error={e}")
     
     def forecast(
         self, 
@@ -169,6 +196,22 @@ class MLForecastingEngine:
         Returns:
             ForecastResult with predictions and metadata
         """
+        # Log and export input data (only if export enabled)
+        if self.enable_export:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            # Log overview thay vì print ra terminal
+            self.model_logger.log_dataframe_overview(
+                data,
+                name="MLForecastEngine.input",
+                context={
+                    "horizon": horizon,
+                    "model": model,
+                    "auto_select": auto_select,
+                    "timestamp": timestamp,
+                },
+            )
+            self._export_data(data.reset_index(), f"ml_input_data_{timestamp}.csv", "Input time series data")
+        
         # Analyze data characteristics
         characteristics = self._analyze_data(data)
         
@@ -178,15 +221,16 @@ class MLForecastingEngine:
         elif model is None:
             model = 'moving_average'
         
-        print(f"🤖 Using model: {model.upper()}")
-        print(f"   Data length: {characteristics.length} days")
-        print(f"   Trend: {'Yes' if characteristics.has_trend else 'No'}")
-        print(f"   Seasonality: {'Yes' if characteristics.has_seasonality else 'No'}")
-        print(f"   Volatility: {characteristics.volatility:.2f}")
+        # Ghi log meta về data & model
+        self.model_logger.info(
+            f"ML_MODEL_SELECTION | model={model} | length={characteristics.length} "
+            f"| has_trend={characteristics.has_trend} | has_seasonality={characteristics.has_seasonality} "
+            f"| volatility={characteristics.volatility:.2f}"
+        )
         
         # Check if model is available
         if model not in self.models:
-            print(f"⚠️  Model '{model}' not available, falling back to moving_average")
+            self.model_logger.warning(f"MODEL_UNAVAILABLE | requested={model} → fallback=moving_average")
             model = 'moving_average'
         
         # Generate forecast
@@ -195,8 +239,7 @@ class MLForecastingEngine:
             result.model_used = model
             return result
         except Exception as e:
-            print(f"❌ {model} failed: {e}")
-            print(f"   Falling back to moving_average")
+            self.model_logger.error(f"MODEL_FAILED | model={model} | error={e} | fallback=moving_average")
             result = self._moving_average_forecast(data, horizon, characteristics)
             result.model_used = 'moving_average'
             return result
@@ -281,7 +324,17 @@ class MLForecastingEngine:
         df['trend'] = np.arange(len(df))
         
         # Fill NaN values (from lag features)
-        df = df.fillna(method='bfill').fillna(0)
+        df = df.bfill().fillna(0)
+        
+        # Log and export features (only if export enabled)
+        if self.enable_export:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.model_logger.log_dataframe_overview(
+                df,
+                name="MLForecastEngine.features",
+                context={"timestamp": timestamp, "n_features": len(df.columns)},
+            )
+            self._export_data(df.reset_index(), f"ml_features_{timestamp}.csv", "Engineered features")
         
         return df
     
@@ -292,8 +345,7 @@ class MLForecastingEngine:
         characteristics: DataCharacteristics
     ) -> ForecastResult:
         """Forecast using XGBoost with feature engineering."""
-        print("   📊 Training XGBoost model...")
-        print("      🔧 Feature engineering...")
+        self.model_logger.info("XGBOOST_FORECAST_START | stage=feature_engineering")
         
         # Create features
         df_features = self._create_features(data)
@@ -302,6 +354,22 @@ class MLForecastingEngine:
         feature_cols = [col for col in df_features.columns if col != 'value']
         X_train = df_features[feature_cols].values
         y_train = df_features['value'].values
+        
+        # Log và export training data (chỉ khi enable_export=True)
+        if self.enable_export:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.model_logger.info(
+                f"XGBOOST_TRAIN_DATA | X_shape={X_train.shape} | y_shape={y_train.shape} "
+                f"| n_features={len(feature_cols)}"
+            )
+            # Export training features và target (file CSV)
+            train_df = pd.DataFrame(X_train, columns=feature_cols, index=df_features.index)
+            train_df['target'] = y_train
+            self._export_data(
+                train_df.reset_index(),
+                f"ml_xgboost_training_{timestamp}.csv",
+                "XGBoost training data (X_train + y_train)",
+            )
         
         # XGBoost parameters
         params = {
@@ -316,12 +384,12 @@ class MLForecastingEngine:
         }
         
         # Train model
-        print("      🚀 Training...")
+        self.model_logger.info("XGBOOST_TRAIN_START")
         model = xgb.XGBRegressor(**params)
         model.fit(X_train, y_train, verbose=False)
         
         # Generate forecast
-        print("      🔮 Generating forecast...")
+        self.model_logger.info("XGBOOST_FORECAST_GENERATE")
         forecasts = []
         lower_bounds = []
         upper_bounds = []
@@ -337,33 +405,55 @@ class MLForecastingEngine:
         # Create a temporary dataframe for recursive forecasting
         temp_df = data.copy()
         
+        # Log prediction inputs
+        prediction_inputs = []
+        
         for i, future_date in enumerate(forecast_dates):
-            # Add dummy row
-            temp_df.loc[future_date] = 0
+            # Add dummy row with last value (better than 0 for recursive prediction)
+            last_value = temp_df['value'].iloc[-1] if len(temp_df) > 0 else 0
+            temp_df.loc[future_date, 'value'] = last_value
             
             # Create features for this point
             df_feat = self._create_features(temp_df)
             X_future = df_feat[feature_cols].iloc[-1:].values
+            
+            # Store prediction input
+            pred_input = pd.DataFrame(X_future, columns=feature_cols)
+            pred_input['date'] = future_date
+            pred_input['step'] = i + 1
+            prediction_inputs.append(pred_input)
             
             # Predict
             pred = model.predict(X_future)[0]
             pred = max(0, pred)  # No negative demand
             
             # Update temp_df with prediction
-            temp_df.loc[future_date] = pred
+            temp_df.loc[future_date, 'value'] = pred
             
             forecasts.append(pred)
-            
-            # Calculate confidence intervals (using training residuals)
-            train_pred = model.predict(X_train)
-            residuals = y_train - train_pred
-            std_err = np.std(residuals)
-            z_score = 1.96  # 95% confidence
-            
+        
+        # Calculate confidence intervals (using training residuals)
+        train_pred = model.predict(X_train)
+        residuals = y_train - train_pred
+        std_err = np.std(residuals)
+        z_score = 1.96  # 95% confidence
+        
+        # Calculate bounds for all forecasts
+        for pred in forecasts:
             lower_bounds.append(max(0, pred - z_score * std_err))
             upper_bounds.append(pred + z_score * std_err)
         
-        print(f"      ✅ Forecast complete (mean: {np.mean(forecasts):.1f})")
+        # Export prediction inputs (only if export enabled)
+        if prediction_inputs and self.enable_export:
+            pred_inputs_df = pd.concat(prediction_inputs, ignore_index=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self._export_data(
+                pred_inputs_df,
+                f"ml_xgboost_prediction_inputs_{timestamp}.csv",
+                "XGBoost prediction inputs (per step)",
+            )
+
+        self.model_logger.info(f"XGBOOST_FORECAST_DONE | mean={np.mean(forecasts):.4f}")
         
         return ForecastResult(
             dates=forecast_dates,

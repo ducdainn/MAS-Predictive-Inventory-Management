@@ -1,34 +1,60 @@
 SET search_path TO public;
 SET client_encoding = 'UTF8';
 
--- BRANCH
+-- ================================================================
+-- BẢNG 1: BRANCH (DANH MỤC KHO/CHI NHÁNH)
+-- 🧠 Agent Note:
+--    - Khi user hỏi về "Kho Đà Nẵng", "Chi nhánh HCM"... hãy dùng ILIKE trên cột 'branch_name'.
+--    - 'branch_code' là khóa ngoại quan trọng để JOIN với bảng sales và inventory.
+--    - Dữ liệu mẫu: 1='Chi nhánh Đà Nẵng UN', 8='Chi nhánh Bình Chánh UN'.
+-- ================================================================
 DROP TABLE IF EXISTS branch CASCADE;
 CREATE TABLE branch (
-  branch_code   INTEGER PRIMARY KEY,
-  region        TEXT    NOT NULL,
-  branch_name   TEXT    NOT NULL
+  branch_code   INTEGER PRIMARY KEY,      -- ID duy nhất (VD: 1, 8, 10...)
+  region        TEXT    NOT NULL,         -- Vùng miền (VD: 'MIỀN TRUNG', 'ĐÔNG NAM BỘ'). Dùng để gom nhóm báo cáo vùng.
+  branch_name   TEXT    NOT NULL          -- Tên hiển thị (VD: 'Chi nhánh Đồng Nai UN'). Dùng để tìm kiếm text.
 );
 
--- BRANCH DISTANCE
+-- ================================================================
+-- BẢNG 2: BRANCH_DISTANCE (KHOẢNG CÁCH)
+-- 🧠 Agent Note:
+--    - Bảng này dùng cho bài toán "Tối ưu luân chuyển" (Stock Transfer).
+--    - Nếu kho A thiếu hàng, tìm kho B có 'distance_km' nhỏ nhất để điều chuyển.
+--    - distance_km = 0 nghĩa là chính nó.
+-- ================================================================
 DROP TABLE IF EXISTS branch_distance CASCADE;
 CREATE TABLE branch_distance (
-  branch_code_1 INTEGER NOT NULL,
-  branch_code_2 INTEGER NOT NULL,
-  distance_km   NUMERIC(12,2) NOT NULL
+  branch_code_1 INTEGER NOT NULL,         -- ID kho nguồn
+  branch_code_2 INTEGER NOT NULL,         -- ID kho đích
+  distance_km   NUMERIC(12,2) NOT NULL    -- Khoảng cách (Km).
 );
 
--- PRODUCT MASTER
+-- ================================================================
+-- BẢNG 3: PRODUCT (DANH MỤC SẢN PHẨM - MASTER DATA)
+-- 🧠 Agent Note:
+--    - Bảng chứa thông tin tĩnh của sản phẩm.
+--    - 'product_code' có dạng '14.L1.3060.A36410.7'.
+--    - 'spec_code_size' (VD: '3060', '6060') rất quan trọng khi user hỏi tìm gạch theo kích thước.
+--    - 'f_sku' (Family SKU) dùng để tìm các sản phẩm tương thay thế (substitutes) nếu mã chính hết hàng.
+-- ================================================================
 DROP TABLE IF EXISTS product CASCADE;
 CREATE TABLE product (
-  product_code     VARCHAR(128) PRIMARY KEY,
-  product_name     TEXT NOT NULL,
-  category         TEXT,
-  f_sku            TEXT,
-  spec_code_size   TEXT,
-  unit             TEXT NOT NULL
+  product_code     VARCHAR(128) PRIMARY KEY, -- Mã SKU (Primary Key)
+  product_name     TEXT NOT NULL,            -- Tên sản phẩm (VD: 'Gạch 30x60 MS A36410 Loại 1'). Dùng ILIKE để tìm.
+  category         TEXT,                     -- Phân loại (Hiện tại dữ liệu mẫu thường để trống hoặc ít dùng).
+  f_sku            TEXT,                     -- Mã nhóm hàng (Family SKU). Dùng để GROUP các sản phẩm cùng hoa văn/bộ.
+  spec_code_size   TEXT,                     -- Kích thước/Quy cách (VD: '3060', '6060', '8080').
+  unit             TEXT NOT NULL             -- Đơn vị tính (VD: 'Viên', 'Kg', 'Thùng').
 );
 
--- INVENTORY THEO CHI NHÁNH (ĐÃ THÊM branch_code)
+-- ================================================================
+-- BẢNG 4: INVENTORY (TỒN KHO HIỆN TẠI - SNAPSHOT)
+-- 🧠 Agent Note:
+--    - Đây là số lượng hàng ĐANG CÓ trong kho (On-hand).
+--    - Dùng bảng này khi user hỏi: "Còn bao nhiêu hàng?", "Tồn kho hiện tại".
+--    - KHÔNG dùng bảng này để tính doanh số bán.
+--    - Cột 'quantity' luôn >= 0.
+-- ================================================================
 DROP TABLE IF EXISTS inventory CASCADE;
 CREATE TABLE inventory (
   product_code   VARCHAR(128) NOT NULL
@@ -37,26 +63,32 @@ CREATE TABLE inventory (
   branch_code    INTEGER NOT NULL
                  REFERENCES branch(branch_code)
                  ON UPDATE CASCADE ON DELETE CASCADE,
-  product_name   TEXT,      -- giữ để tiện xem, không bắt buộc
-  unit           TEXT,
-  quantity       INTEGER NOT NULL CHECK (quantity >= 0),
-  PRIMARY KEY (product_code, branch_code)
+  product_name   TEXT,      -- (Denormalized) Tên SP lưu dư thừa để query nhanh.
+  unit           TEXT,      -- (Denormalized) Đơn vị tính.
+  quantity       INTEGER NOT NULL CHECK (quantity >= 0), -- Số lượng tồn kho thực tế.
+  PRIMARY KEY (product_code, branch_code) -- Khóa chính kép: 1 Sản phẩm tại 1 Kho là duy nhất.
 );
 
--- SALES (giữ nguyên như trước)
+-- ================================================================
+-- BẢNG 5: SALES (LỊCH SỬ GIAO DỊCH BÁN HÀNG)
+-- 🧠 Agent Note:
+--    - Đây là dữ liệu LỊCH SỬ (Historical Data) dùng để train AI Forecast.
+--    - Dùng bảng này khi user hỏi: "Bán được bao nhiêu?", "Doanh thu?", "Xu hướng?".
+--    - Lưu ý cột 'square_meters': Ngành gạch thường báo cáo theo m2 bên cạnh số lượng viên.
+--    - quantity: Số lượng bán ra (Demand).
+-- ================================================================
 DROP TABLE IF EXISTS sales CASCADE;
 CREATE TABLE sales (
-  id             BIGSERIAL PRIMARY KEY,
-  date           DATE NOT NULL,
+  id             BIGSERIAL PRIMARY KEY,    -- Khóa chính tự tăng
+  date           DATE NOT NULL,            -- Ngày bán (YYYY-MM-DD). Quan trọng để GROUP BY tháng/năm.
   branch_code    INTEGER NOT NULL
                  REFERENCES branch(branch_code)
                  ON UPDATE CASCADE ON DELETE RESTRICT,
-  customer_code  VARCHAR(64) NOT NULL,
+  customer_code  VARCHAR(64) NOT NULL,     -- Mã khách hàng (VD: 'KH07781').
   product_code   VARCHAR(128) NOT NULL
                  REFERENCES product(product_code)
                  ON UPDATE CASCADE ON DELETE RESTRICT,
-  quantity       INTEGER NOT NULL CHECK (quantity >= 0),
-  square_meters  NUMERIC(12,2) NOT NULL,
-  unit           TEXT NOT NULL
+  quantity       INTEGER NOT NULL CHECK (quantity > 0), -- Số lượng bán (Viên/Thùng/Cái).
+  square_meters  NUMERIC(12,4),            -- Diện tích bán được (m2). Quan trọng cho ngành gạch.
+  unit           TEXT                      -- Đơn vị tính của quantity.
 );
-

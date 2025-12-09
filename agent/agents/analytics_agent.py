@@ -27,10 +27,10 @@ class AnalyticsAgent:
     def analyze(self, sql: str, question: str, analysis_plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Execute query and create visualizations."""
         print(f"📊 Executing analytics query...")
-        print(f"   SQL: {sql[:200]}...")
+        # Không in SQL ra terminal nữa; đã có SQLQueryLogger log ra file
 
         try:
-            df = self.db.execute_query(sql)
+            df = self.db.execute_query(sql, source="AnalyticsAgent.analyze")
         except Exception as e:
             print(f"❌ Query execution failed: {e}")
             import traceback

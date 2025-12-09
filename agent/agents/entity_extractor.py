@@ -36,6 +36,21 @@ class EntityExtractor:
         """Extract entities from user question using LLM + fuzzy matching."""
         print("🔍 Extracting entities from question...")
 
+        # Check if this is a "top N" ranking query - these are general analysis, not specific entities
+        question_lower = question.lower()
+        is_top_n_query = bool(re.search(r'\btop\s+\d+|top\s*10|top\s*5|top\s*20|hàng đầu|cao nhất', question_lower, re.IGNORECASE))
+        
+        if is_top_n_query:
+            print("   ℹ️  Detected 'top N' ranking query - skipping specific entity extraction")
+            return {
+                'branch_names': [],
+                'branch_codes': [],
+                'product_names': [],
+                'product_codes': [],
+                'regions': [],
+                'scope': 'all'
+            }
+
         branch_names = self._get_branch_samples()
         regions = self.regions
 
@@ -74,10 +89,10 @@ Extract entities as JSON:
                   f"{len(entities.get('product_codes', []))} products")
 
             # SAFETY NET: nếu không tìm được chi nhánh nhưng câu hỏi nhắc tới "chi nhánh"
-            # chạy toàn hệ thống hoặc suy luận theo region.
+            # CHỈ search nếu KHÔNG phải "top N" query (đã xử lý ở trên)
             if not entities.get('branch_codes'):
                 q_lower = question.lower()
-                if ('chi nhánh' in q_lower or 'chi nhanh' in q_lower):
+                if ('chi nhánh' in q_lower or 'chi nhanh' in q_lower) and not is_top_n_query:
                     print("⚠️ No branch_codes from LLM, using vector search for branches...")
                     search_terms = self._extract_branch_keywords(question) or [question]
                     for term in search_terms:
@@ -101,13 +116,29 @@ Extract:
 1. Branch names (e.g., "đà nẵng", "hà nội", "chi nhánh 1")
 2. Product names (e.g., "gạch 30x60", "sơn nước")
 3. Regions (e.g., "miền trung", "tây nguyên", "đông nam bộ", "tây nam bộ", "hồ chí minh")
-4. Scope: "specific" if question mentions specific branches/products, "all" if general
+4. Scope: "specific" if question mentions specific branches/products/regions, "all" if general analysis
 
-Rules:
+CRITICAL RULES:
+- **"Top N" ranking queries** (e.g., "top 10", "top 5", "hàng đầu", "cao nhất") are GENERAL analysis queries
+  → Do NOT extract specific branch/product names from these queries!
+  → "Top 10 chi nhánh" means "rank ALL branches", not extract 10 specific branches
+  → Return empty branch_names/product_names for "top N" queries
+- If question says "theo vùng miền", "theo vung mien", "tất cả vùng", "tat ca vung" → scope="all" and regions=[]
+- "theo vùng miền" means "by all regions" (grouping dimension), NOT a specific region filter
+- Do NOT extract "miền trung" from "theo vùng miền" - these are different!
+- Extract regions ONLY if user mentions a SPECIFIC region (e.g., "miền trung", "tây nguyên")
 - Extract partial matches (e.g., "đà nẵng" matches "Chi nhánh Đà Nẵng 1")
 - Case insensitive
 - Return empty lists if nothing mentioned
 - Be lenient with Vietnamese diacritics
+
+Examples:
+- "Top 10 chi nhánh có doanh thu cao nhất" → scope="all", branch_names=[], product_names=[] (ranking query)
+- "Top 5 sản phẩm bán chạy" → scope="all", branch_names=[], product_names=[] (ranking query)
+- "Phân tích doanh số theo vùng miền" → scope="all", regions=[]
+- "Phân tích doanh số miền trung" → scope="specific", regions=["miền trung"]
+- "Doanh số tất cả vùng" → scope="all", regions=[]
+- "Chi nhánh Đà Nẵng" → scope="specific", branch_names=["đà nẵng"] (specific entity)
 
 Return ONLY valid JSON, no explanations."""
 
@@ -216,8 +247,8 @@ Return ONLY valid JSON, no explanations."""
 
     def _load_entity_cache(self):
         """Load entire branch/product tables into memory for fast lookup."""
-        branch_df = self.db.execute_query("SELECT branch_code, branch_name, region FROM branch ORDER BY branch_name")
-        product_df = self.db.execute_query("SELECT product_code, product_name FROM product ORDER BY product_name")
+        branch_df = self.db.execute_query("SELECT branch_code, branch_name, region FROM branch ORDER BY branch_name", source="EntityExtractor._load_entity_cache")
+        product_df = self.db.execute_query("SELECT product_code, product_name FROM product ORDER BY product_name", source="EntityExtractor._load_entity_cache")
 
         self.branch_cache = branch_df.to_dict("records")
         self.product_cache = product_df.to_dict("records")

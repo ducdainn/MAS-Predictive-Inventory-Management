@@ -4,10 +4,12 @@ OrchestratorAgent: coordinates all agents in the MAS.
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import time
 
 import pandas as pd
 
 from agent.utils.dataframe_utils import format_dataframe_columns
+from agent.utils.workflow_data_logger import get_workflow_logger
 
 from agent.agents.analytics_agent import AnalyticsAgent
 from agent.agents.data_analysis_agent import DataAnalysisAgent
@@ -16,7 +18,6 @@ from agent.agents.forecast_agent import ForecastAgent
 from agent.agents.intent_agent import IntentAgent
 from agent.agents.inventory_agent import InventoryOptimizationAgent
 from agent.agents.schema_agent import SchemaAgent
-from agent.agents.smart_insights_agent import SmartInsightsGenerator  # pylint: disable=unused-import
 from agent.agents.sql_agent import SQLAgent
 from agent.core.conversation import ConversationEntry
 from agent.core.llm_provider import LLMProvider
@@ -46,6 +47,9 @@ class OrchestratorAgent:
         self.forecast_agent = ForecastAgent(db_manager, use_ml=True)  # UPGRADED: XGBoost/LightGBM/Prophet
         self.inventory_agent = InventoryOptimizationAgent(db_manager, self.forecast_agent, llm_provider)  # With LLM for insights
         
+        # Initialize workflow logger
+        self.workflow_logger = get_workflow_logger()
+        
         print("✅ OrchestratorAgent initialized with all sub-agents (ML Forecasting + Entity Extraction + Smart Insights)")
     
     def process_query(self, question: str, forced_intent: Optional[str] = None) -> Dict[str, Any]:
@@ -56,40 +60,127 @@ class OrchestratorAgent:
         
         start_time = datetime.now()
         
+        # Log initial question
+        self.workflow_logger.log_step(
+            "initial_question",
+            "OrchestratorAgent",
+            {"question": question, "forced_intent": forced_intent},
+            {"start_time": start_time.isoformat()}
+        )
+        
         try:
             # Step 1: Classify intent
+            step1_start = time.perf_counter()
             print("📌 Step 1: Intent Classification")
             valid_intents = {"FORECAST", "ANALYTICS", "INVENTORY_OPTIMIZATION"}
             if forced_intent and forced_intent.upper() in valid_intents:
                 intent = forced_intent.upper()
-                print(f"   → Intent overridden by caller: {intent}\n")
+                print(f"   → Intent overridden by caller: {intent}")
             else:
                 intent = self.intent_agent.classify(question)
-                print(f"   → Intent: {intent}\n")
+                print(f"   → Intent: {intent}")
+            step1_elapsed = time.perf_counter() - step1_start
+            print(f"   ⏱️  Step 1 completed in {step1_elapsed:.3f}s\n")
+            
+            # Log intent classification
+            self.workflow_logger.log_step(
+                "intent_classification",
+                "OrchestratorAgent",
+                {"intent": intent, "forced": forced_intent is not None},
+                {"question": question}
+            )
             
             # Step 2: Extract entities for ALL intents (to improve SQL generation)
+            step2_start = time.perf_counter()
             print(f"📌 Step 2: Extracting entities from question...")
             entities = self.entity_extractor.extract_entities(question)
+            step2_elapsed = time.perf_counter() - step2_start
+            print(f"   ⏱️  Step 2 completed in {step2_elapsed:.3f}s")
+            
+            # Log entity extraction
+            self.workflow_logger.log_step(
+                "entity_extraction",
+                "OrchestratorAgent",
+                entities or {},
+                {"question": question, "intent": intent}
+            )
             
             # Step 3: Handle different intents
+            step3_start = time.perf_counter()
+            step3_breakdown = {}  # Store timing for each sub-step
+            
             if intent == "INVENTORY_OPTIMIZATION":
                 # Step 3a: Optimize inventory with entity filters
                 print(f"📌 Step 3: Processing with Inventory Optimization Agent")
                 result = self.inventory_agent.optimize_inventory(question, entities=entities)
                 sql = "N/A - Inventory optimization uses multiple queries internally"
+                step3_elapsed = time.perf_counter() - step3_start
+                
+                # Extract detailed timing breakdown from result if available
+                timing_breakdown = result.get("timing_breakdown", {})
+                if timing_breakdown:
+                    # Use detailed breakdown from InventoryOptimizationAgent
+                    for step_name, step_time in timing_breakdown.items():
+                        if step_name != "Total":  # Skip total, we'll use step3_elapsed
+                            step3_breakdown[step_name] = step_time
+                else:
+                    # Fallback: just use total time
+                    step3_breakdown["Inventory Optimization"] = step3_elapsed
+                
+                print(f"   ⏱️  Step 3 completed in {step3_elapsed:.3f}s")
+                
+                # Log inventory optimization result
+                self.workflow_logger.log_step(
+                    "inventory_optimization_result",
+                    "OrchestratorAgent",
+                    {
+                        "success": result.get("success", False),
+                        "summary": result.get("summary", {}),
+                        "action_plan": result.get("action_plan", {}),
+                    },
+                    {"question": question, "entities": entities}
+                )
             else:
+                schema_start = time.perf_counter()
+                print("📌 Step 3a: Getting schema context...")
                 schema_context = self.schema_agent.get_schema_context(question)
+                schema_elapsed = time.perf_counter() - schema_start
+                step3_breakdown["Schema Context"] = schema_elapsed
+                print(f"   ⏱️  Step 3a completed in {schema_elapsed:.3f}s")
+                
+                # Log schema context
+                self.workflow_logger.log_step(
+                    "schema_context",
+                    "OrchestratorAgent",
+                    {"schema_context": schema_context},
+                    {"question": question, "intent": intent}
+                )
+                
                 analysis_plan = None
                 if intent == "ANALYTICS":
-                    print("📌 Step 3: Data analysis scoping (new)")
-                analysis_plan = self.data_analysis_agent.analyze(
-                        question,
-                        entities,
-                        schema_context=schema_context
-                    )
+                    analysis_start = time.perf_counter()
+                    print("📌 Step 3b: Data analysis scoping...")
+                    analysis_plan = self.data_analysis_agent.analyze(
+                            question,
+                            entities,
+                            schema_context=schema_context
+                        )
+                    analysis_elapsed = time.perf_counter() - analysis_start
+                    step3_breakdown["Data Analysis Scoping"] = analysis_elapsed
+                    print(f"   ⏱️  Step 3b completed in {analysis_elapsed:.3f}s")
                 
-                # Step 3: Generate SQL for FORECAST and ANALYTICS (with entities)
-                print("📌 Step 3: SQL Generation")
+                    # Log analysis plan
+                    if analysis_plan:
+                        self.workflow_logger.log_step(
+                            "analysis_plan",
+                            "OrchestratorAgent",
+                            analysis_plan,
+                            {"question": question, "intent": intent}
+                        )
+                
+                # Step 3c: Generate SQL for FORECAST and ANALYTICS (with entities)
+                sql_start = time.perf_counter()
+                print("📌 Step 3c: SQL Generation...")
                 sql = self.sql_agent.generate_sql(
                     question,
                     intent,
@@ -97,17 +188,51 @@ class OrchestratorAgent:
                     analysis_plan=analysis_plan,
                     schema_context=schema_context
                 )
-                print(f"   → SQL: {sql[:200]}...\n")
+                sql_elapsed = time.perf_counter() - sql_start
+                step3_breakdown["SQL Generation"] = sql_elapsed
+                print(f"   → SQL: {sql[:200]}...")
+                print(f"   ⏱️  Step 3c completed in {sql_elapsed:.3f}s")
                 
-                # Step 3: Route to appropriate agent
-                print(f"📌 Step 3: Processing with {intent} Agent")
+                # Log SQL query (will also be logged by SQLAgent, but log here for workflow completeness)
+                self.workflow_logger.log_sql_query(
+                    "sql_generation",
+                    "OrchestratorAgent",
+                    sql,
+                    question=question,
+                    intent=intent,
+                    entities=entities
+                )
+                
+                # Step 3d: Route to appropriate agent
+                agent_start = time.perf_counter()
+                print(f"📌 Step 3d: Processing with {intent} Agent...")
                 
                 if intent == "FORECAST":
                     result = self.forecast_agent.forecast(sql, question)
                 else:
                     result = self.analytics_agent.analyze(sql, question, analysis_plan=analysis_plan)
+                
+                agent_elapsed = time.perf_counter() - agent_start
+                step3_breakdown[f"{intent} Agent Processing"] = agent_elapsed
+                print(f"   ⏱️  Step 3d completed in {agent_elapsed:.3f}s")
+                
+                step3_elapsed = time.perf_counter() - step3_start
+                print(f"   ⏱️  Step 3 (total) completed in {step3_elapsed:.3f}s")
+                
+                # Log agent result
+                self.workflow_logger.log_step(
+                    f"{intent.lower()}_result",
+                    "OrchestratorAgent",
+                    {
+                        "success": result.get("success", False),
+                        "summary": result.get("summary", ""),
+                        "metrics": result.get("metrics", {}),
+                    },
+                    {"question": question, "intent": intent, "sql": sql}
+                )
             
             # Step 4: Store in memory with success status
+            step4_start = time.perf_counter()
             success = result.get('success', True)
             error_message = None
             if not success:
@@ -123,7 +248,16 @@ class OrchestratorAgent:
                 success=success,
                 error_message=error_message
             )
-            self.memory.add_entry(entry)
+            try:
+                self.memory.add_entry(entry)
+                step4_elapsed = time.perf_counter() - step4_start
+                if step4_elapsed < 0.001:
+                    print(f"   ⏱️  Step 4 (memory storage) completed in {step4_elapsed:.6f}s (very fast, likely cached or async)")
+                else:
+                    print(f"   ⏱️  Step 4 (memory storage) completed in {step4_elapsed:.3f}s")
+            except Exception as e:
+                step4_elapsed = time.perf_counter() - step4_start
+                print(f"   ⚠️  Step 4 (memory storage) completed in {step4_elapsed:.3f}s with error: {e}")
             
             elapsed = (datetime.now() - start_time).total_seconds()
             
@@ -136,7 +270,32 @@ class OrchestratorAgent:
                 "elapsed_seconds": elapsed
             }
             
-            print(f"\n✅ Completed in {elapsed:.2f}s")
+            # Log final result
+            self.workflow_logger.log_step(
+                "final_result",
+                "OrchestratorAgent",
+                final_result,
+                {
+                    "session_id": self.workflow_logger.get_session_id(),
+                    "session_dir": self.workflow_logger.get_session_dir(),
+                    "elapsed_seconds": elapsed
+                }
+            )
+            
+            print(f"\n{'='*80}")
+            print(f"✅ Completed in {elapsed:.2f}s")
+            print(f"📊 Timing Breakdown:")
+            print(f"   • Step 1 (Intent): {step1_elapsed:.3f}s")
+            print(f"   • Step 2 (Entities): {step2_elapsed:.3f}s")
+            print(f"   • Step 3 (Processing): {step3_elapsed:.3f}s")
+            if step3_breakdown:
+                for sub_step, sub_time in step3_breakdown.items():
+                    pct = (sub_time / step3_elapsed * 100) if step3_elapsed > 0 else 0
+                    print(f"      └─ {sub_step}: {sub_time:.3f}s ({pct:.1f}%)")
+            print(f"   • Step 4 (Memory): {step4_elapsed:.3f}s")
+            print(f"   • Total: {elapsed:.3f}s")
+            print(f"{'='*80}")
+            print(f"📁 Workflow data saved to: {self.workflow_logger.get_session_dir()}")
             return final_result
             
         except Exception as e:
@@ -495,23 +654,7 @@ if __name__ == "__main__":
     # Initialize system
     orchestrator = initialize_system()
     
-    # # Example 1: Analytics
-    # print("\n" + "="*80)
-    # print("📊 Example 1: Analytics Query")
-    # print("="*80)
-    # result1 = orchestrator.process_query(
-    #     "Top 10 sản phẩm bán chạy nhất trong tháng này"
-    # )
-    
-    # # Example 2: Forecast
-    # print("\n" + "="*80)
-    # print("🔮 Example 2: Forecast Query")
-    # print("="*80)
-    # result2 = orchestrator.process_query(
-    #     "Dự báo doanh số bán hàng cho 30 ngày tới"
-    # )
-    
-    # Example 3: Inventory Optimization with Entity Extraction (NEW!)
+    # Example: Inventory Optimization with Entity Extraction
     print("\n" + "="*80)
     print("🎯 Example 3: Inventory Optimization with Smart Filtering")
     print("="*80)

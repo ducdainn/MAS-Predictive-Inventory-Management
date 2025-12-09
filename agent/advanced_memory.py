@@ -1,9 +1,9 @@
 """
-🧠 Advanced Memory System with Vector Database
+Advanced Memory System with Vector Database
 
 Architecture:
     - Short-term: Working memory (last 10 interactions)
-    - Long-term: Vector DB for semantic search (ChromaDB)
+    - Long-term: Vector DB for semantic search (Qdrant)
     - Episodic: Learned experiences from successes/failures
     - Semantic: Domain knowledge (products, branches, patterns)
 
@@ -12,19 +12,30 @@ Architecture:
 import os
 import json
 import sqlite3
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass
 from collections import deque
 import hashlib
+from pathlib import Path
 
 try:
-    import chromadb
-    from chromadb.config import Settings
-    CHROMADB_AVAILABLE = True
+    from dotenv import load_dotenv
 except ImportError:
-    CHROMADB_AVAILABLE = False
-    print("⚠️  ChromaDB not installed. Run: pip install chromadb")
+    load_dotenv = None
+
+# Load .env file from agent directory
+if load_dotenv:
+    agent_dir = Path(__file__).resolve().parent
+    load_dotenv(agent_dir / ".env")
+
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, Query, QueryFilter
+    QDRANT_AVAILABLE = True
+except ImportError:
+    QDRANT_AVAILABLE = False
+    print("⚠️  Qdrant not installed. Run: pip install qdrant-client")
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -71,17 +82,6 @@ class EpisodicMemoryEntry:
     success: bool
     learned_insight: str
     confidence: float  # How confident we are in this learning
-
-
-@dataclass
-class SemanticMemoryEntry:
-    """Domain knowledge entry."""
-    id: str
-    entity_type: str  # 'product', 'branch', 'pattern', 'rule'
-    entity_id: str
-    content: str
-    metadata: Dict[str, Any]
-    embedding: Optional[List[float]] = None
 
 
 # ============================================================================
@@ -144,41 +144,63 @@ class LongTermMemory:
     """
     Persistent memory with semantic search.
     
-    Uses ChromaDB for vector storage and retrieval.
+    Uses Qdrant for vector storage and retrieval.
     Stores embeddings of:
     - Successful query patterns
     - Solutions that worked
     - User preferences
     """
     
-    def __init__(self, persist_dir: str = "./chroma_db", use_redis: bool = False):
-        if not CHROMADB_AVAILABLE:
-            raise ImportError("ChromaDB required. Install: pip install chromadb")
+    def __init__(self, 
+                 qdrant_url: Optional[str] = None,
+                 qdrant_api_key: Optional[str] = None,
+                 use_redis: bool = False):
+        """
+        Initialize Qdrant client.
         
-        self.persist_dir = persist_dir
-        os.makedirs(persist_dir, exist_ok=True)
+        Args:
+            qdrant_url: Qdrant server URL (default: cloud instance)
+            qdrant_api_key: Qdrant API key (default: from user config)
+            use_redis: Whether to use Redis cache
+        """
+        if not QDRANT_AVAILABLE:
+            raise ImportError("Qdrant required. Install: pip install qdrant-client")
         
-        # Initialize ChromaDB
-        self.client = chromadb.PersistentClient(path=persist_dir)
+        # Load Qdrant configuration from environment variables
+        if qdrant_url is None:
+            qdrant_url = os.getenv("QDRANT_URL")
         
-        # Collections
-        self.query_collection = self.client.get_or_create_collection(
-            name="query_patterns",
-            metadata={"description": "Successful query patterns and solutions"}
-        )
+        if qdrant_api_key is None:
+            qdrant_api_key = os.getenv("QDRANT_API_KEY")
         
-        self.user_prefs_collection = self.client.get_or_create_collection(
-            name="user_preferences",
-            metadata={"description": "User-specific preferences"}
+        if not qdrant_url or not qdrant_api_key:
+            raise ValueError(
+                "QDRANT_URL and QDRANT_API_KEY must be set in environment variables or .env file. "
+                "Please configure these values in your .env file or environment."
+            )
+        
+        # Initialize Qdrant client
+        self.client = QdrantClient(
+            url=qdrant_url,
+            api_key=qdrant_api_key
         )
         
         # Embedding model (multilingual for Vietnamese)
+        # Model dimension: 384 for paraphrase-multilingual-MiniLM-L12-v2
+        self.embedding_dim = 384
         if EMBEDDINGS_AVAILABLE:
             self.encoder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
             print("✅ Loaded multilingual embedding model")
         else:
             self.encoder = None
             print("⚠️  No embedding model available")
+        
+        # Collection names
+        self.query_collection_name = "query_patterns"
+        self.user_prefs_collection_name = "user_preferences"
+        
+        # Create collections if they don't exist
+        self._ensure_collections()
         
         # Redis cache (optional, for faster retrieval)
         self.redis_client = None
@@ -193,7 +215,38 @@ class LongTermMemory:
                 print("✅ Redis cache connected")
             except:
                 self.redis_client = None
-                print("ℹ️  Redis not available, using ChromaDB only")
+                print("ℹ️  Redis not available, using Qdrant only")
+    
+    def _ensure_collections(self):
+        """Create collections if they don't exist."""
+        try:
+            # Check if collections exist
+            collections = self.client.get_collections()
+            collection_names = [col.name for col in collections.collections]
+            
+            # Create query_patterns collection
+            if self.query_collection_name not in collection_names:
+                self.client.create_collection(
+                    collection_name=self.query_collection_name,
+                    vectors_config=VectorParams(
+                        size=self.embedding_dim,
+                        distance=Distance.COSINE
+                    )
+                )
+                print(f"✅ Created collection: {self.query_collection_name}")
+            
+            # Create user_preferences collection
+            if self.user_prefs_collection_name not in collection_names:
+                self.client.create_collection(
+                    collection_name=self.user_prefs_collection_name,
+                    vectors_config=VectorParams(
+                        size=self.embedding_dim,
+                        distance=Distance.COSINE
+                    )
+                )
+                print(f"✅ Created collection: {self.user_prefs_collection_name}")
+        except Exception as e:
+            print(f"⚠️  Error ensuring collections: {e}")
     
     def add_query_pattern(self, 
                          query: str,
@@ -222,18 +275,26 @@ class LongTermMemory:
             f"{query}_{intent}_{datetime.now().isoformat()}".encode()
         ).hexdigest()
         
-        # Store in ChromaDB
-        self.query_collection.add(
-            embeddings=[embedding],
-            documents=[query],
-            metadatas=[{
-                "intent": intent,
-                "solution": json.dumps(solution),
-                "success": success,
-                "timestamp": datetime.now().isoformat(),
-                **(metadata or {})
-            }],
-            ids=[query_id]
+        # Prepare payload (metadata in Qdrant)
+        payload = {
+            "query": query,
+            "intent": intent,
+            "solution": json.dumps(solution),
+            "success": success,
+            "timestamp": datetime.now().isoformat(),
+            **(metadata or {})
+        }
+        
+        # Store in Qdrant
+        self.client.upsert(
+            collection_name=self.query_collection_name,
+            points=[
+                PointStruct(
+                    id=query_id,
+                    vector=embedding,
+                    payload=payload
+                )
+            ]
         )
         
         print(f"   💾 Stored query pattern: {query[:50]}...")
@@ -269,30 +330,47 @@ class LongTermMemory:
         # Generate query embedding
         query_embedding = self.encoder.encode(query).tolist()
         
-        # Search in ChromaDB
-        where_clause = {"success": True} if only_successful else None
-        results = self.query_collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k * 2 if only_successful else top_k,  # Get more to filter
-            where=where_clause
+        # Build filter for successful queries only
+        query_filter = None
+        if only_successful:
+            query_filter = QueryFilter(
+                must=[
+                    FieldCondition(
+                        key="success",
+                        match=MatchValue(value=True)
+                    )
+                ]
+            )
+        
+        # Search in Qdrant using query method
+        results = self.client.query(
+            collection_name=self.query_collection_name,
+            query=Query(
+                vector=query_embedding,
+                filter=query_filter,
+                top=top_k * 2 if only_successful else top_k
+            )
         )
         
         # Process results
         similar_queries = []
-        if results['documents'] and len(results['documents'][0]) > 0:
-            for i, doc in enumerate(results['documents'][0]):
-                distance = results['distances'][0][i]
-                similarity = 1 - distance  # Convert distance to similarity
-                
-                if similarity >= min_similarity:
-                    metadata = results['metadatas'][0][i]
-                    similar_queries.append({
-                        "query": doc,
-                        "intent": metadata['intent'],
-                        "solution": json.loads(metadata['solution']),
-                        "similarity": round(similarity, 3),
-                        "timestamp": metadata['timestamp']
-                    })
+        for result in results:
+            # Qdrant returns score (higher = more similar), convert to similarity
+            # Cosine distance: score ranges from 0 to 1 (1 = identical)
+            similarity = result.score
+            
+            if similarity >= min_similarity:
+                payload = result.payload
+                similar_queries.append({
+                    "query": payload.get("query", ""),
+                    "intent": payload.get("intent", ""),
+                    "solution": json.loads(payload.get("solution", "{}")),
+                    "similarity": round(similarity, 3),
+                    "timestamp": payload.get("timestamp", "")
+                })
+        
+        # Limit to top_k
+        similar_queries = similar_queries[:top_k]
         
         # Cache in Redis
         if self.redis_client and similar_queries:
@@ -312,38 +390,64 @@ class LongTermMemory:
         """Store user-specific preferences."""
         pref_id = f"{user_id}_{preference_type}"
         
-        self.user_prefs_collection.upsert(
-            embeddings=[[0.0] * 384],  # Dummy embedding
-            documents=[preference_type],
-            metadatas=[{
-                "user_id": user_id,
-                "type": preference_type,
-                "value": json.dumps(preference_value),
-                "timestamp": datetime.now().isoformat()
-            }],
-            ids=[pref_id]
+        # Generate dummy embedding (user prefs don't need semantic search)
+        dummy_embedding = [0.0] * self.embedding_dim
+        
+        payload = {
+            "user_id": user_id,
+            "type": preference_type,
+            "value": json.dumps(preference_value),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        self.client.upsert(
+            collection_name=self.user_prefs_collection_name,
+            points=[
+                PointStruct(
+                    id=pref_id,
+                    vector=dummy_embedding,
+                    payload=payload
+                )
+            ]
         )
     
     def get_user_preferences(self, user_id: str) -> Dict[str, Any]:
         """Retrieve all preferences for a user."""
-        results = self.user_prefs_collection.get(
-            where={"user_id": user_id}
+        # Scroll through collection with filter
+        results = self.client.scroll(
+            collection_name=self.user_prefs_collection_name,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="user_id",
+                        match=MatchValue(value=user_id)
+                    )
+                ]
+            ),
+            limit=100
         )
         
         preferences = {}
-        if results['metadatas']:
-            for meta in results['metadatas']:
-                pref_type = meta['type']
-                pref_value = json.loads(meta['value'])
-                preferences[pref_type] = pref_value
+        for point in results[0]:  # results is (points, next_page_offset)
+            payload = point.payload
+            pref_type = payload.get("type", "")
+            pref_value = json.loads(payload.get("value", "{}"))
+            preferences[pref_type] = pref_value
         
         return preferences
     
     def get_stats(self) -> Dict[str, int]:
         """Get memory statistics."""
+        try:
+            query_count = self.client.get_collection(self.query_collection_name).points_count
+            prefs_count = self.client.get_collection(self.user_prefs_collection_name).points_count
+        except:
+            query_count = 0
+            prefs_count = 0
+        
         return {
-            "query_patterns_count": self.query_collection.count(),
-            "user_preferences_count": self.user_prefs_collection.count(),
+            "query_patterns_count": query_count,
+            "user_preferences_count": prefs_count,
         }
 
 
@@ -557,12 +661,14 @@ class AdvancedMemoryManager:
         
         try:
             self.long_term = LongTermMemory(
-                persist_dir=os.path.join(persist_dir, "vector_db"),
                 use_redis=use_redis
             )
             print("   ✅ Long-term memory (Vector DB) initialized")
         except ImportError as e:
             print(f"   ⚠️  Long-term memory unavailable: {e}")
+            self.long_term = None
+        except Exception as e:
+            print(f"   ⚠️  Long-term memory initialization error: {e}")
             self.long_term = None
         
         self.episodic = EpisodicMemory(

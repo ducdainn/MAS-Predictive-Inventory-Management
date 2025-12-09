@@ -1,6 +1,7 @@
 version: "3.9"
 
 services:
+  # PostgreSQL Database
   db:
     image: postgres:16
     container_name: brick-postgres
@@ -17,3 +18,55 @@ services:
       - ./init:/docker-entrypoint-initdb.d
       # Lưu dữ liệu postgres
       - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Streamlit UI Application
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brickdemand-ui
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      # Database connection
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      PG_HOST: db
+      PG_PORT: 5432
+      PG_DB: brickdemand
+      
+      # API Keys (from .env file hoặc environment)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HUGGINGFACEHUB_API_TOKEN: ${HUGGINGFACEHUB_API_TOKEN:-}
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      
+      # Streamlit config
+      STREAMLIT_SERVER_PORT: 8501
+      STREAMLIT_SERVER_ADDRESS: 0.0.0.0
+      STREAMLIT_SERVER_HEADLESS: "true"
+    volumes:
+      # Mount models directory (read-only)
+      - ./models_panel:/app/models_panel:ro
+      
+      # Mount data directories (persistent storage)
+      - ./charts:/app/charts
+      - ./model_logs:/app/model_logs
+      - ./sql_logs:/app/sql_logs
+      - ./workflow_logs:/app/workflow_logs
+      - ./memory:/app/memory
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

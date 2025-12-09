@@ -182,30 +182,62 @@ def display_forecast_results(result):
     
     st.markdown("---")
     
-    # Chart
-    if data.get('chart'):
-        st.subheader("📈 Forecast Visualization")
-        
-        try:
-            img = Image.open(data['chart'])
-            st.image(img, use_container_width=True, caption="Demand Forecast")
-        except Exception as e:
-            st.warning(f"Could not load chart: {e}")
-    
-    # Interactive Plotly chart
-    if data.get('historical_data') is not None and data.get('forecast') is not None:
+    # Interactive Plotly chart (dùng thay cho biểu đồ ảnh tĩnh)
+    # Prefer raw series (with canonical column names) for plotting if available
+    if (data.get('historical_data_raw') is not None or data.get('historical_data') is not None) and \
+       (data.get('forecast_raw') is not None or data.get('forecast') is not None):
         st.markdown("---")
         st.subheader("📊 Interactive Forecast")
         
-        historical = data['historical_data']
-        forecast = data['forecast']
+        # Fix: Use explicit None check instead of 'or' to avoid DataFrame truthiness error
+        historical = data.get('historical_data_raw')
+        if historical is None:
+            historical = data.get('historical_data')
         
+        forecast = data.get('forecast_raw')
+        if forecast is None:
+            forecast = data.get('forecast')
+        
+        # Additional safety check: ensure both are valid DataFrames
+        if historical is None or forecast is None:
+            st.warning("⚠️ Missing data for interactive chart. Showing static chart only.")
+            return
+        
+        if historical.empty or forecast.empty:
+            st.warning("⚠️ Empty data for interactive chart. Showing static chart only.")
+            return
+        
+        # Check for required columns
+        if 'value' not in historical.columns:
+            st.warning("⚠️ Historical data missing 'value' column. Showing static chart only.")
+            return
+        
+        if 'forecast' not in forecast.columns:
+            st.warning("⚠️ Forecast data missing 'forecast' column. Showing static chart only.")
+            return
+
+        # Giới hạn khoảng thời gian hiển thị:
+        # - 1 tháng trước ngày lịch sử cuối cùng
+        # - 1 tháng sau ngày lịch sử cuối cùng (tức là vùng giao giữa lịch sử và forecast)
+        hist_end = pd.to_datetime(historical.index.max()).normalize()
+        start_date = hist_end - pd.Timedelta(days=30)
+        end_date = hist_end + pd.Timedelta(days=30)
+
+        hist_window = historical[(historical.index >= start_date) & (historical.index <= hist_end)]
+        fc_window = forecast[(forecast.index >= hist_end) & (forecast.index <= end_date)]
+
+        # Nếu cửa sổ rỗng, fallback sang dữ liệu gốc để tránh crash
+        if hist_window.empty:
+            hist_window = historical
+        if fc_window.empty:
+            fc_window = forecast
+
         fig = go.Figure()
         
         # Historical data
         fig.add_trace(go.Scatter(
-            x=historical.index,
-            y=historical['value'],
+            x=hist_window.index,
+            y=hist_window['value'],
             mode='lines+markers',
             name='Historical',
             line=dict(color='steelblue', width=2),
@@ -214,8 +246,8 @@ def display_forecast_results(result):
         
         # Forecast data
         fig.add_trace(go.Scatter(
-            x=forecast.index,
-            y=forecast['forecast'],
+            x=fc_window.index,
+            y=fc_window['forecast'],
             mode='lines+markers',
             name='Forecast',
             line=dict(color='orange', width=2, dash='dash'),
@@ -230,7 +262,7 @@ def display_forecast_results(result):
             height=500
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Summary
     if data.get('summary'):

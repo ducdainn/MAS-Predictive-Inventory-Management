@@ -279,22 +279,55 @@ def display_charts_tab(data):
     
     st.markdown("### 📊 Optimization Charts")
     
-    # Show matplotlib chart
-    if data.get('chart'):
-        try:
-            img = Image.open(data['chart'])
-            st.image(img, use_container_width=True, caption="Inventory Optimization Analysis")
-        except Exception as e:
-            st.warning(f"Could not load chart: {e}")
-    
     # Interactive Plotly charts - use raw data for filtering
     if data.get('recommendations_raw') is not None and not data['recommendations_raw'].empty:
         recs = data['recommendations_raw']  # Use raw data with English columns
         
+        # 1) Biểu đồ interactive: Tồn kho hiện tại vs ROP vs Tồn kho an toàn (Top 10)
+        st.markdown("#### 📦 Top 10: Tồn kho vs ROP & Tồn kho an toàn")
+        try:
+            top_10 = recs.nlargest(10, 'current_stock')
+            if not top_10.empty:
+                labels = [
+                    f"{row['product_name'][:30]}\n({row['branch_name'][:20]})"
+                    for _, row in top_10.iterrows()
+                ]
+                fig_top10 = go.Figure()
+                fig_top10.add_bar(
+                    x=labels,
+                    y=top_10['current_stock'],
+                    name='Tồn Kho Hiện Tại',
+                    marker_color='steelblue',
+                )
+                fig_top10.add_bar(
+                    x=labels,
+                    y=top_10['reorder_point'],
+                    name='Điểm Đặt Hàng (ROP)',
+                    marker_color='orange',
+                )
+                fig_top10.add_bar(
+                    x=labels,
+                    y=top_10['safety_stock'],
+                    name='Tồn Kho An Toàn',
+                    marker_color='green',
+                )
+                fig_top10.update_layout(
+                    barmode='group',
+                    xaxis_title='Sản Phẩm @ Chi Nhánh',
+                    yaxis_title='Số Lượng',
+                    height=450,
+                    legend_title_text='Chỉ Tiêu',
+                    xaxis_tickangle=-45,
+                )
+                st.plotly_chart(fig_top10, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Không thể vẽ biểu đồ Top 10 tồn kho: {e}")
+        
+        st.markdown("---")
         col1, col2 = st.columns(2)
         
         with col1:
-            # Action distribution
+            # 2) Phân phối hành động (interactive)
             action_counts = recs['action'].value_counts()
             
             # Translate action labels to Vietnamese
@@ -316,7 +349,7 @@ def display_charts_tab(data):
             st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            # Priority distribution
+            # 3) Phân phối ưu tiên (interactive)
             priority_counts = recs[recs['action'] != 'OK']['priority'].value_counts()
             
             # Translate priority labels
@@ -332,6 +365,38 @@ def display_charts_tab(data):
                 color_discrete_map={'HIGH': '#e74c3c', 'MEDIUM': '#f39c12', 'LOW': '#f1c40f'}
             )
             st.plotly_chart(fig, use_container_width=True)
+
+        # 4) Biểu đồ interactive: Tổng nhu cầu dự báo 30 ngày (aggregate)
+        per_item_forecasts = data.get('per_item_forecasts', {})
+        if per_item_forecasts:
+            st.markdown("---")
+            st.markdown("#### 📈 Tổng Nhu Cầu Dự Báo 30 Ngày")
+            try:
+                first_fc = next(iter(per_item_forecasts.values()))
+                fc_df = first_fc.get('forecast_df')
+                if fc_df is not None and not fc_df.empty and 'forecast' in fc_df.columns:
+                    base_dates = pd.to_datetime([d.date() for d in fc_df.index])
+                    total_series = pd.Series(0.0, index=base_dates)
+                    for fc in per_item_forecasts.values():
+                        fdf = fc.get('forecast_df')
+                        if fdf is None or fdf.empty or 'forecast' not in fdf.columns:
+                            continue
+                        dates_norm = pd.to_datetime([d.date() for d in fdf.index])
+                        s = pd.Series(fdf['forecast'].values, index=dates_norm)
+                        total_series = total_series.add(s, fill_value=0)
+                    agg_df = total_series.reset_index()
+                    agg_df.columns = ['date', 'forecast']
+                    fig_agg = px.line(
+                        agg_df,
+                        x='date',
+                        y='forecast',
+                        title='Tổng Nhu Cầu Dự Báo 30 Ngày',
+                        labels={'date': 'Ngày', 'forecast': 'Số Lượng'}
+                    )
+                    fig_agg.update_traces(line_color='orange')
+                    st.plotly_chart(fig_agg, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Không thể vẽ biểu đồ tổng nhu cầu dự báo: {e}")
 
 
 def display_insights_tab(data):
