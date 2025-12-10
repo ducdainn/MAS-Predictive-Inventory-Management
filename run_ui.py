@@ -4,7 +4,10 @@ Quick launcher for BrickDemand Streamlit UI
 
 import subprocess
 import sys
+import os
 from pathlib import Path
+
+os.environ['QDRANT_MODE'] = 'cloud'
 
 def check_dependencies():
     """Check if all required dependencies are installed"""

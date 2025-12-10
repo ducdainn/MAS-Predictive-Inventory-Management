@@ -31,7 +31,7 @@ if load_dotenv:
 
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, Query, QueryFilter
+    from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, Query
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
@@ -249,6 +249,18 @@ class LongTermMemory:
                 )
                 print(f"✅ Created collection: {self.query_collection_name}")
             
+            # Create payload index for 'success' field (required for filtering)
+            try:
+                from qdrant_client.models import PayloadSchemaType
+                self.client.create_payload_index(
+                    collection_name=self.query_collection_name,
+                    field_name="success",
+                    field_schema=PayloadSchemaType.BOOL
+                )
+                print(f"✅ Created index for 'success' field")
+            except Exception:
+                pass  # Index may already exist
+            
             # Create user_preferences collection
             if self.user_prefs_collection_name not in collection_names:
                 self.client.create_collection(
@@ -345,9 +357,9 @@ class LongTermMemory:
         query_embedding = self.encoder.encode(query).tolist()
         
         # Build filter for successful queries only
-        query_filter = None
+        search_filter = None
         if only_successful:
-            query_filter = QueryFilter(
+            search_filter = Filter(
                 must=[
                     FieldCondition(
                         key="success",
@@ -356,19 +368,17 @@ class LongTermMemory:
                 ]
             )
         
-        # Search in Qdrant using query method
-        results = self.client.query(
+        # Search in Qdrant using query_points method
+        results = self.client.query_points(
             collection_name=self.query_collection_name,
-            query=Query(
-                vector=query_embedding,
-                filter=query_filter,
-                top=top_k * 2 if only_successful else top_k
-            )
+            query=query_embedding,
+            query_filter=search_filter,
+            limit=top_k * 2 if only_successful else top_k
         )
         
         # Process results
         similar_queries = []
-        for result in results:
+        for result in results.points:
             # Qdrant returns score (higher = more similar), convert to similarity
             # Cosine distance: score ranges from 0 to 1 (1 = identical)
             similarity = result.score
@@ -674,15 +684,20 @@ class AdvancedMemoryManager:
         print("   ✅ Short-term memory initialized")
         
         try:
+            print(f"   🔄 Initializing Qdrant... (QDRANT_MODE={os.getenv('QDRANT_MODE', 'not set')})")
             self.long_term = LongTermMemory(
                 use_redis=use_redis
             )
-            print("   ✅ Long-term memory (Vector DB) initialized")
+            stats = self.long_term.get_stats()
+            print(f"   ✅ Long-term memory (Qdrant) initialized")
+            print(f"      → Collections: query_patterns={stats.get('query_patterns_count', 0)}, user_prefs={stats.get('user_preferences_count', 0)}")
         except ImportError as e:
             print(f"   ⚠️  Long-term memory unavailable: {e}")
             self.long_term = None
         except Exception as e:
             print(f"   ⚠️  Long-term memory initialization error: {e}")
+            import traceback
+            traceback.print_exc()
             self.long_term = None
         
         self.episodic = EpisodicMemory(
@@ -725,13 +740,17 @@ class AdvancedMemoryManager:
                 "metrics": result.get('metrics', {})
             }
             
-            self.long_term.add_query_pattern(
-                query=query,
-                intent=intent,
-                solution=solution,
-                success=success,
-                metadata={"elapsed": result.get('elapsed_seconds', 0)}
-            )
+            try:
+                self.long_term.add_query_pattern(
+                    query=query,
+                    intent=intent,
+                    solution=solution,
+                    success=success,
+                    metadata={"elapsed": result.get('elapsed_seconds', 0)}
+                )
+                print(f"   💾 [Qdrant] Stored: {query[:50]}...")
+            except Exception as e:
+                print(f"   ⚠️  [Qdrant] Failed to store: {e}")
     
     def learn_from_experience(self,
                             situation: str,
@@ -778,21 +797,28 @@ class AdvancedMemoryManager:
             List of similar queries with solutions
         """
         if not self.long_term:
+            print(f"   ⚠️  [Qdrant] Long-term memory not available, skipping recall")
             return []
         
-        similar = self.long_term.search_similar_queries(
-            query, 
-            top_k=top_k,
-            only_successful=only_successful
-        )
-        
-        if similar:
-            print(f"\n   🔍 Found {len(similar)} similar past queries:")
-            for s in similar:
-                success_indicator = "✅" if s.get('solution', {}).get('metadata', {}).get('success', True) else "❌"
-                print(f"      {success_indicator} {s['query'][:50]}... (similarity: {s['similarity']})")
-        
-        return similar
+        try:
+            print(f"   🔍 [Qdrant] Searching similar queries: {query[:50]}...")
+            similar = self.long_term.search_similar_queries(
+                query, 
+                top_k=top_k,
+                only_successful=only_successful
+            )
+            
+            if similar:
+                print(f"   ✅ [Qdrant] Found {len(similar)} similar past queries:")
+                for s in similar:
+                    print(f"      → {s['query'][:50]}... (similarity: {s['similarity']})")
+            else:
+                print(f"   ℹ️  [Qdrant] No similar queries found")
+            
+            return similar
+        except Exception as e:
+            print(f"   ⚠️  [Qdrant] Search failed: {e}")
+            return []
     
     def get_learned_insights(self, situation: str) -> List[str]:
         """Get learned insights for a situation."""
