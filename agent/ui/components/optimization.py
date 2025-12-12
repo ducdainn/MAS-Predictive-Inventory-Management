@@ -32,8 +32,7 @@ def render(orchestrator):
             [
                 "Custom Question",
                 "Tối ưu hóa tồn kho của chi nhánh đà nẵng",
-                "Tối ưu hóa tồn kho của chi nhánh bình chánh",
-                "Kiểm tra tồn kho miền bắc",
+                "Tối ưu tồn kho của chi nhánh bình chánh",
                 "Tối ưu hóa tồn kho tất cả chi nhánh"
             ]
         )
@@ -544,6 +543,15 @@ def display_data_tab(data):
             combined_display = pd.concat([filtered_display, forecast_df_display], axis=1)
         else:
             combined_display = filtered_display
+        
+        # Remove unwanted columns from detailed table
+        remove_cols = [
+            'Nhu Cầu TB Ngày (Lịch Sử)',
+            'Trung Bình daily_demand',
+            'Forecast Demand 30d'
+        ]
+        combined_display = combined_display.drop(columns=[c for c in remove_cols if c in combined_display.columns], errors='ignore')
+        display_cols = [c for c in display_cols if c not in remove_cols]
         
         # Display with selected columns
         if display_cols:

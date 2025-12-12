@@ -225,7 +225,7 @@ def _render_interactive_chart(df: pd.DataFrame):
             fig = px.bar(
                 plot_df, x=x_col, y=y_col,
                 color=y_col,
-                color_continuous_scale="Blues",
+                color_continuous_scale="Viridis",
                 title=f"{y_col} by {x_col}"
             )
             fig.update_layout(showlegend=False)
@@ -235,7 +235,7 @@ def _render_interactive_chart(df: pd.DataFrame):
                 plot_df, x=y_col, y=x_col,
                 orientation='h',
                 color=y_col,
-                color_continuous_scale="Blues",
+                color_continuous_scale="Viridis",
                 title=f"{y_col} by {x_col}"
             )
             # Preserve sort order from dataframe
