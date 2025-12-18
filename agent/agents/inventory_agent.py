@@ -1628,16 +1628,35 @@ class InventoryOptimizationAgent:
             )
             return pd.DataFrame()
     
-    def _calculate_safety_stock(self, avg_demand: float, std_demand: float) -> float:
+    def _calculate_safety_stock(self, avg_demand: float, std_demand: float, 
+                                  std_lead_time: float = 1.0) -> float:
         """
-        Calculate safety stock using statistical method.
-        Safety Stock = Z * σ * √LT
-        where Z = service level factor, σ = demand std, LT = lead time
+        Calculate safety stock using the combined demand and lead time variability formula.
+        
+        SS = Z × √((LT × σ_D²) + (D² × σ_LT²))
+        
+        where:
+            Z = service level factor (z-score)
+            LT = average lead time (days)
+            σ_D = standard deviation of demand
+            D = average demand
+            σ_LT = standard deviation of lead time
+        
+        This formula accounts for both demand variability and lead time variability,
+        providing more robust safety stock calculations.
         """
         from scipy import stats
         z_score = stats.norm.ppf(self.service_level)
-        safety_stock = z_score * std_demand * np.sqrt(self.lead_time_days)
-        return max(0, safety_stock)
+        
+        # Combined variability formula
+        # SS = Z × √((LT × σ_D²) + (D² × σ_LT²))
+        demand_variance_component = self.lead_time_days * (std_demand ** 2)
+        lead_time_variance_component = (avg_demand ** 2) * (std_lead_time ** 2)
+        
+        safety_stock = z_score * np.sqrt(demand_variance_component + lead_time_variance_component)
+        
+        # Round to nearest integer for practical inventory management
+        return round(max(0, safety_stock))
     
     def _calculate_rop(self, avg_demand: float, safety_stock: float) -> float:
         """
@@ -1645,7 +1664,7 @@ class InventoryOptimizationAgent:
         ROP = (Average Daily Demand × Lead Time) + Safety Stock
         """
         rop = (avg_demand * self.lead_time_days) + safety_stock
-        return max(0, rop)
+        return round(max(0, rop))
     
     def _calculate_eoq(self, annual_demand: float, ordering_cost: float = 1000, 
                       holding_cost: float = 50) -> float:
@@ -1657,7 +1676,7 @@ class InventoryOptimizationAgent:
         if annual_demand <= 0:
             return 0
         eoq = np.sqrt((2 * annual_demand * ordering_cost) / holding_cost)
-        return max(0, eoq)
+        return round(max(0, eoq))
     
     def _generate_recommendations(self, 
                                  inventory_data: pd.DataFrame,

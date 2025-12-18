@@ -30,7 +30,7 @@ def check_dependencies():
             missing.append(name)
     
     return missing
-
+ 
 def main():
     """Launch Streamlit app"""
     
