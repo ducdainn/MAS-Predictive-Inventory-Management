@@ -48,3 +48,10 @@ htmlcov/
 
 # Files
 Data_FSKU.csv
+
+# File Images
+*.png
+*.jpg
+
+# pgdata
+pgdata/

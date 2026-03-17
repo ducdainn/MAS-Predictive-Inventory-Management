@@ -362,6 +362,4 @@ Built with:
 
 ---
 
-**🧱 Happy Optimizing!** 🚀
-
 
