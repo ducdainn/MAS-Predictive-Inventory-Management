@@ -102,7 +102,8 @@ def render(orchestrator):
             sales_trend_df = db.execute_query("""
                 SELECT date, SUM(quantity) as total_sales
                 FROM sales
-                WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+                  AND date < DATE_TRUNC('month', CURRENT_DATE)
                 GROUP BY date
                 ORDER BY date
             """)

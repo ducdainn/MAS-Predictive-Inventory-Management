@@ -718,7 +718,7 @@ class ForecastAgent:
             data_length = len(df_ts)
             # OPTIMIZED ROUTING LOGIC (Recommended by Data Science Expert):
             # - >= 14 ngày lịch sử → Panel XGBoost (multi-step) - Best accuracy
-            # - 7-13 ngày lịch sử → Moving Average (weighted với trend) - Balanced
+            # - 7-14 ngày lịch sử → Moving Average (weighted với trend) - Balanced
             # - < 7 ngày lịch sử → Simple Average - Conservative
             
             # Additional checks:
@@ -748,14 +748,8 @@ class ForecastAgent:
                 if idx <= 5:
                     print(f"      🔍 SKU {product_code}: last_sale={last_sale_date.date()}, current={current_date.date()}, days_diff={days_since_last_sale}, data_length={data_length}")
                 
-                # CRITICAL FIX: Only mark as dead stock if days_since_last_sale > 90 AND data_length > 0
-                # But also check if the data is actually recent (within last 180 days)
-                # This prevents marking all SKUs as dead stock when using historical data
                 if days_since_last_sale > 90:
-                    # Additional check: if the last sale date is very old (e.g., > 180 days), it's likely dead stock
-                    # But if it's within 180 days, it might just be sparse data
                     if days_since_last_sale > 180:
-                        # Dead stock: no sales in 180+ days → forecast = 0
                         routing_counts['dead_stock'] += 1
                     last_date = df_ts.index[-1]
                     future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=horizon, freq='D')
@@ -903,10 +897,6 @@ class ForecastAgent:
                 if idx <= 5:  # Only log first 5 to avoid spam
                     print(f"      ⚠️  SKU {product_code}: forecast sum = 0 (model: {model_info.get('model')})")
 
-        # Print routing summary
-        print(f"   📊 Routing Summary: panel={routing_counts['panel']}, pretrained={routing_counts['pretrained']}, "
-              f"moving_avg={routing_counts['moving_avg']}, simple={routing_counts['simple']}, dead_stock={routing_counts['dead_stock']}")
-        
         # Sau khi duyệt xong tất cả group, xử lý batch cho các series đủ điều kiện panel
         if panel_series:
             step4_start = time.perf_counter()
